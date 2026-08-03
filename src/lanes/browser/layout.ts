@@ -171,36 +171,92 @@ function collectLayoutIssues(opts: {
     document.querySelectorAll<HTMLElement>(interactiveSelector),
   ).filter(isVisible);
 
-  const small: LayoutInstance[] = [];
-  let smallTotal = 0;
-  let smallestArea = Infinity;
-  let smallestLabel = '';
-  for (const el of interactive) {
-    const rect = el.getBoundingClientRect();
-    // SC 2.5.8 exempts targets that sit inline within a sentence.
+  const targets = interactive.map((el) => ({ el, rect: el.getBoundingClientRect() }));
+  const isUndersized = (r: DOMRect): boolean =>
+    r.width < minTapTarget || r.height < minTapTarget;
+
+  // Undersized, and not exempt for being inline within a sentence.
+  const undersized = targets.filter(({ el, rect }) => {
+    if (!isUndersized(rect)) return false;
     const style = window.getComputedStyle(el);
     if (style.display === 'inline') {
       const parentText = el.parentElement?.textContent ?? '';
       const ownText = el.textContent ?? '';
-      if (parentText.trim().length > ownText.trim().length + 20) continue;
+      if (parentText.trim().length > ownText.trim().length + 20) return false;
     }
-    if (rect.width < minTapTarget || rect.height < minTapTarget) {
-      const w = Math.round(rect.width);
-      const h = Math.round(rect.height);
-      smallTotal += 1;
-      if (w * h < smallestArea) {
-        smallestArea = w * h;
-        smallestLabel = `${w}x${h}px`;
+    return true;
+  });
+
+  /**
+   * SC 2.5.8's SPACING exception, which is the one that actually matters in
+   * practice. A small target PASSES if a 24px-diameter circle centred on it
+   * touches no other target. A row of 20px-tall nav links with 60px between
+   * their centres is conforming, and reporting it is a false positive that
+   * teaches a reader to distrust the whole report -- measured on a real site,
+   * every one of nine nav links cleared the requirement by 2-4x.
+   */
+  const radius = minTapTarget / 2;
+  const centreOf = (r: DOMRect): { x: number; y: number } => ({
+    x: r.left + r.width / 2,
+    y: r.top + r.height / 2,
+  });
+  const circleHitsRect = (c: { x: number; y: number }, r: DOMRect): boolean => {
+    const nx = Math.max(r.left, Math.min(c.x, r.right));
+    const ny = Math.max(r.top, Math.min(c.y, r.bottom));
+    return Math.hypot(c.x - nx, c.y - ny) < radius;
+  };
+
+  const small: LayoutInstance[] = [];
+  let smallTotal = 0;
+  let smallestArea = Infinity;
+  let smallestLabel = '';
+
+  for (const target of undersized) {
+    const centre = centreOf(target.rect);
+    let crowdedBy: { el: HTMLElement; rect: DOMRect } | undefined;
+
+    for (const other of targets) {
+      if (other.el === target.el) continue;
+      // Nested controls legitimately share space.
+      if (target.el.contains(other.el) || other.el.contains(target.el)) continue;
+
+      const hit = isUndersized(other.rect)
+        ? // both undersized: their 24px circles must not intersect
+          Math.hypot(centre.x - centreOf(other.rect).x, centre.y - centreOf(other.rect).y) <
+          minTapTarget
+        : // a full-size neighbour: our circle must not reach its box
+          circleHitsRect(centre, other.rect);
+
+      if (hit) {
+        crowdedBy = other;
+        break;
       }
-      if (small.length < maxInstances) {
-        small.push({
-          selector: cssPath(el),
-          snippet: outerHtml(el),
-          message: `Tap target is ${w}x${h}px`,
-          measured: `${w}x${h}px`,
-          expected: `${minTapTarget}x${minTapTarget}px`,
-        });
-      }
+    }
+
+    // Enough clear space around it -> conforming, not a defect.
+    if (!crowdedBy) continue;
+
+    const w = Math.round(target.rect.width);
+    const h = Math.round(target.rect.height);
+    smallTotal += 1;
+    if (w * h < smallestArea) {
+      smallestArea = w * h;
+      smallestLabel = `${w}x${h}px`;
+    }
+    if (small.length < maxInstances) {
+      const gap = Math.round(
+        Math.hypot(
+          centre.x - centreOf(crowdedBy.rect).x,
+          centre.y - centreOf(crowdedBy.rect).y,
+        ),
+      );
+      small.push({
+        selector: cssPath(target.el),
+        snippet: outerHtml(target.el),
+        message: `Tap target is ${w}x${h}px and sits ${gap}px from "${cssPath(crowdedBy.el)}", so the spacing exception does not apply`,
+        measured: `${w}x${h}px, ${gap}px to the nearest target`,
+        expected: `${minTapTarget}x${minTapTarget}px, or ${minTapTarget}px of clear space`,
+      });
     }
   }
   if (smallTotal > 0) {
@@ -259,6 +315,35 @@ function collectLayoutIssues(opts: {
   }
 
   // ---- 5. Content clipped by a fixed-height container ----------------------
+  /**
+   * The lowest point of real, rendered TEXT inside an element.
+   *
+   * scrollHeight is the wrong instrument for this: decorative blobs are
+   * routinely positioned to hang off a corner precisely so that overflow:hidden
+   * will crop them to the rounded border, and each one inflates scrollHeight
+   * without a single character being lost. Measuring text nodes directly asks
+   * the only question that matters -- is any WORDING cut off? -- and on a real
+   * page it cleared a false positive where the "missing" 40px was an
+   * aria-hidden gradient blur with no text in it at all.
+   */
+  const lowestTextBottom = (root: HTMLElement): number => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let lowest = -Infinity;
+    let node = walker.nextNode();
+    while (node) {
+      const value = node.nodeValue ?? '';
+      const parent = node.parentElement;
+      if (value.trim() !== '' && parent && parent.getAttribute('aria-hidden') !== 'true') {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0 && rect.bottom > lowest) lowest = rect.bottom;
+      }
+      node = walker.nextNode();
+    }
+    return lowest;
+  };
+
   const clipped: LayoutInstance[] = [];
   let clippedTotal = 0;
   const blocks = document.querySelectorAll<HTMLElement>('body *');
@@ -267,20 +352,24 @@ function collectLayoutIssues(opts: {
     if (!isVisible(el)) continue;
     const style = window.getComputedStyle(el);
     if (style.overflow !== 'hidden' && style.overflowY !== 'hidden') continue;
-    if (el.scrollHeight > el.clientHeight + 8 && el.clientHeight > 0) {
-      const text = (el.textContent ?? '').trim();
-      if (text.length > 20) {
-        clippedTotal += 1;
-        if (clipped.length < maxInstances) {
-          clipped.push({
-            selector: cssPath(el),
-            snippet: outerHtml(el),
-            message: `${el.scrollHeight - el.clientHeight}px of content is hidden below the container`,
-            measured: `${el.scrollHeight}px of content in a ${el.clientHeight}px box`,
-            expected: 'container tall enough for its content',
-          });
-        }
-      }
+    if (el.clientHeight === 0) continue;
+
+    const box = el.getBoundingClientRect();
+    const textBottom = lowestTextBottom(el);
+    if (textBottom === -Infinity) continue; // nothing but decoration in here
+
+    const cutOff = Math.round(textBottom - box.bottom);
+    if (cutOff <= 8) continue; // within sub-pixel and border noise
+
+    clippedTotal += 1;
+    if (clipped.length < maxInstances) {
+      clipped.push({
+        selector: cssPath(el),
+        snippet: outerHtml(el),
+        message: `${cutOff}px of TEXT extends past the bottom of this container and is cropped`,
+        measured: `text reaches ${cutOff}px below a ${Math.round(box.height)}px box`,
+        expected: 'container tall enough for its text',
+      });
     }
   }
   if (clippedTotal > 0) {
