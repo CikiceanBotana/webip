@@ -86,7 +86,11 @@ function instanceOf(node: AxeNode): FindingInstance {
   if (message) instance.message = truncate(message, 220);
   else if (node.failureSummary) instance.message = truncate(node.failureSummary, 220);
 
-  if (data?.contrastRatio !== undefined) {
+  // A ratio of 0 is not a measurement -- it is axe's placeholder for "I could
+  // not work this out", which it reports when the background is a gradient or
+  // an image. Presenting it as "0:1" would claim invisible text where axe
+  // actually said it could not judge.
+  if (data?.contrastRatio !== undefined && data.contrastRatio > 0) {
     const colours =
       data.fgColor && data.bgColor ? ` (${data.fgColor} on ${data.bgColor})` : '';
     instance.measured = `${data.contrastRatio}:1${colours}`;
@@ -111,17 +115,29 @@ export async function checkAxe(
   const results = await new AxeBuilder({ page }).analyze();
   const findings: Finding[] = [];
 
-  const emit = (result: AxeResult, severity: ReturnType<typeof severityFromImpact> | 'info'): void => {
+  const emit = (
+    result: AxeResult,
+    severity: ReturnType<typeof severityFromImpact> | 'info',
+    kind: 'violation' | 'needs-review',
+  ): void => {
     const nodes = result.nodes ?? [];
+    const review = kind === 'needs-review';
     findings.push(
       makeFinding({
         site: target.site,
         url: target.url,
         lane: 'browser',
         tool: 'axe-core',
-        rule: result.id,
+        // Kept as a DISTINCT rule id. `collapse` groups by url+tool+rule and
+        // adopts the most severe label, so sharing an id with the violation
+        // would silently relabel "axe could not judge this" as "this is
+        // broken" -- on one page that turned 1 real contrast failure and 41
+        // undecidable ones into a single row reading "70 serious failures".
+        rule: review ? `${result.id}-needs-review` : result.id,
         severity,
-        title: result.help ?? result.description ?? result.id,
+        title: review
+          ? `Needs human review: ${result.help ?? result.description ?? result.id}`
+          : (result.help ?? result.description ?? result.id),
         detail: truncate(result.description ?? '', 300) || undefined,
         // EVERY failing node, not just the first.
         instances: nodes.map(instanceOf),
@@ -135,13 +151,14 @@ export async function checkAxe(
   };
 
   for (const violation of results.violations as unknown as AxeResult[]) {
-    emit(violation, severityFromImpact(violation.impact));
+    emit(violation, severityFromImpact(violation.impact), 'violation');
   }
 
-  // `incomplete` = axe could not decide automatically. Colour contrast over a
-  // background image lands here, so it is worth surfacing, but quietly.
+  // `incomplete` = axe ran the check and could not decide. Contrast over a
+  // gradient or an image lands here. Worth surfacing so a human can look, but
+  // it is evidence of uncertainty, not of a defect.
   for (const incomplete of results.incomplete as unknown as AxeResult[]) {
-    emit(incomplete, 'info');
+    emit(incomplete, 'info', 'needs-review');
   }
 
   return findings;
