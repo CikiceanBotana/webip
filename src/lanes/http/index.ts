@@ -20,7 +20,7 @@ import { mapPool } from '../../core/pool.js';
 import type { Finding, LaneResult, PageTarget, RunConfig, ToolName } from '../../core/types.js';
 
 import { checkLinks } from './links.js';
-import { checkHtmlValidate, checkNuValidator } from './markup.js';
+import { checkHtmlValidate, checkNuValidator, hasJava } from './markup.js';
 import { checkSemantics } from './semantics.js';
 
 export interface HttpLaneOptions {
@@ -269,12 +269,12 @@ export async function runHttpLane(
   // The two process-based checks run over the whole batch at once, so their
   // outcome is per batch, not per page. Attribute it to every page the batch
   // carried, otherwise a failed JVM would leave 40 pages looking validated.
-  const recordBatch = (tool: ToolName, enabledFlag: boolean, produced: Finding[]): void => {
+  const recordBatch = (tool: ToolName, skipReason: string | null, produced: Finding[]): void => {
     const counts = countFindingsByUrl(produced);
     const failed = errors.some((e) => e.startsWith(`${tool}:`));
     for (const { target } of live) {
-      if (!enabledFlag) {
-        coverage.record(target.url, target.site, tool, 'skipped', { reason: 'disabled' });
+      if (skipReason !== null) {
+        coverage.record(target.url, target.site, tool, 'skipped', { reason: skipReason });
       } else if (failed) {
         coverage.record(target.url, target.site, tool, 'error', { reason: 'batch failed' });
       } else {
@@ -285,8 +285,17 @@ export async function runHttpLane(
     }
   };
 
-  recordBatch('nu-validator', opts.tools.nuValidator, nuFindings);
-  recordBatch('lychee', opts.tools.lychee, linkFindings);
+  // The Nu validator returns an empty array when no JRE is on PATH, which is
+  // indistinguishable from "this markup is valid". Ask separately, so a machine
+  // without Java reports 40 pages as UNCHECKED rather than as clean.
+  const nuSkipReason = !opts.tools.nuValidator
+    ? 'disabled'
+    : (await hasJava())
+      ? null
+      : 'no Java runtime on PATH';
+
+  recordBatch('nu-validator', nuSkipReason, nuFindings);
+  recordBatch('lychee', opts.tools.lychee ? null : 'disabled', linkFindings);
 
   return { findings, errors, coverage: coverage.list(), durationMs: Date.now() - started };
 }

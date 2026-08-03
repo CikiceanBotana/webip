@@ -158,14 +158,20 @@ async function inspectPage(
     // explicitly: a page with no findings because it never loaded is not clean.
     const reason = err instanceof Error ? err.message : String(err);
     errors.push(`navigate ${target.url}: ${reason}`);
-    coverage.record(target.url, target.site, 'fetch', 'error', { reason });
+    // Deliberately NOT recorded against 'fetch': that key belongs to the HTTP
+    // lane, which fetched this same URL successfully over plain HTTP. The two
+    // records are merged by key, so reusing it here would erase a true success
+    // with a failure from a different operation. The in-page tools carry the
+    // reason instead, which is where a reader would look for it anyway.
     for (const [tool, enabled] of [
       ['axe-core', opts.tools.axe],
       ['ibm-equal-access', opts.tools.ibm],
       ['layout', opts.tools.layout],
     ] as Array<[ToolName, boolean]>) {
       if (enabled) {
-        coverage.record(target.url, target.site, tool, 'error', { reason: 'navigation failed' });
+        coverage.record(target.url, target.site, tool, 'error', {
+          reason: `page did not load: ${reason}`,
+        });
       }
     }
   } finally {

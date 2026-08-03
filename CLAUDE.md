@@ -156,5 +156,19 @@ npm run analyze -- out/pilot/findings.json
 npm run typecheck
 ```
 
-Budget the browser lane at roughly `deepSites × maxPagesPerSite × 30s / browserConcurrency`.
+Budget the browser lane at roughly `deepSites × maxPagesPerSite × 30s / browserConcurrency`,
+**plus** `deepSites × maxPagesPerSite × ~18s` for Lighthouse, which is serialised.
 `browserConcurrency` is **memory**-bound (~300MB/worker), not CPU-bound — this host has ~5.6GB.
+
+### Known scaling limit: serialised Lighthouse
+
+Lighthouse is process-wide serial (see above — it has to be), so it does not benefit from
+`browserConcurrency` and becomes the browser lane's floor. At ~18s/page that is fine for the
+current 120-page deep scan (~36 min) but would be ~34 hours if the browser lane were ever
+pointed at all 6,800 pages.
+
+The fix when that day comes is **worker_threads**, not more browsers: each thread gets its own
+`perf_hooks` performance instance, so the User Timing collision disappears and Lighthouse can
+run genuinely in parallel again. Do not attempt it with child browsers alone — the collision is
+in the Node process, not in Chromium. Until then, `--no-lighthouse` is the escape hatch
+(it is ~80% of browser-lane cost).
