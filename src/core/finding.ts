@@ -9,9 +9,10 @@
 
 import { createHash } from 'node:crypto';
 
-import { classify } from './catalog.js';
+import { audienceFor, classify } from './catalog.js';
 import {
   SEVERITIES,
+  type Audience,
   type Category,
   type Finding,
   type FindingInstance,
@@ -51,6 +52,7 @@ export interface FindingInput {
   lighthouseCategory?: string;
   /** Overrides for the catalog lookup. */
   category?: Category;
+  audience?: Audience;
   remedy?: string;
   standards?: string[];
 }
@@ -127,6 +129,21 @@ export function makeFinding(input: FindingInput): Finding {
   const count = Math.max(input.count ?? instances.length, 1);
   const kept = instances.slice(0, MAX_INSTANCES);
 
+  const category = input.category ?? info.category;
+  const audience = input.audience ?? info.audience ?? audienceFor(input.tool, input.rule, category);
+
+  /**
+   * Severity means "how much is a human affected", so a rule that affects no
+   * human cannot outrank one that does. Developer-only spec deviations are
+   * capped at info: still reported, still counted, never at the top of the
+   * list ahead of a dead link. Before this, one sweep ranked 13,858 harmless
+   * trailing slashes above 170 broken URLs.
+   */
+  const severity: Severity =
+    audience === 'developer' && severityRank(input.severity) < severityRank('info')
+      ? 'info'
+      : input.severity;
+
   return {
     id: createHash('sha1').update(fingerprint).digest('hex').slice(0, 16),
     site: input.site,
@@ -134,8 +151,9 @@ export function makeFinding(input: FindingInput): Finding {
     lane: input.lane,
     tool: input.tool,
     rule: input.rule,
-    category: input.category ?? info.category,
-    severity: input.severity,
+    category,
+    audience,
+    severity,
     title: input.title,
     ...(detail !== undefined ? { detail } : {}),
     ...(remedy !== undefined ? { remedy } : {}),
@@ -259,6 +277,13 @@ export function countByTool(findings: readonly Finding[]): Record<string, number
 export function countByCategory(findings: readonly Finding[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const f of findings) out[f.category] = (out[f.category] ?? 0) + 1;
+  return out;
+}
+
+/** Occurrences, not rows: the point is how much of the report each audience owns. */
+export function countByAudience(findings: readonly Finding[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of findings) out[f.audience] = (out[f.audience] ?? 0) + f.count;
   return out;
 }
 

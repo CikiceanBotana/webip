@@ -30,6 +30,8 @@ import type {
 } from '../../core/types.js';
 
 import { checkAxe } from './axe.js';
+import { checkBranding } from './branding.js';
+import { checkContrast } from './contrast.js';
 import { checkIbm, closeIbm } from './ibm.js';
 import { checkLayout } from './layout.js';
 import { checkLighthouse } from './lighthouse.js';
@@ -148,8 +150,16 @@ async function inspectPage(
     const live = page;
     await run('axe-core', opts.tools.axe, () => checkAxe(target, live, evidence));
     await run('ibm-equal-access', opts.tools.ibm, () => checkIbm(target, live, evidence));
-    // Layout last of the in-page checks: it resizes the viewport for the
-    // mobile pass, which would invalidate anything measured after it.
+    // Measured contrast BEFORE layout: it samples rendered pixels at the
+    // desktop viewport, and layout resizes to a phone width for its mobile pass.
+    await run('contrast', opts.tools.contrast, () => checkContrast(target, live, evidence));
+    // Layout last of the in-page checks, for that same reason.
+    // Branding only on the site root: the header is identical on every page, so
+    // running it everywhere would report one missing favicon eight times.
+    const isRoot = new URL(target.url).pathname.replace(/\/$/, '') === '';
+    await run('branding', opts.tools.branding && isRoot, () =>
+      checkBranding(target, live, evidence),
+    );
     await run('layout', opts.tools.layout, () =>
       checkLayout(target, live, { mobilePass: true }, evidence),
     );
@@ -167,6 +177,7 @@ async function inspectPage(
       ['axe-core', opts.tools.axe],
       ['ibm-equal-access', opts.tools.ibm],
       ['layout', opts.tools.layout],
+      ['contrast', opts.tools.contrast],
     ] as Array<[ToolName, boolean]>) {
       if (enabled) {
         coverage.record(target.url, target.site, tool, 'error', {

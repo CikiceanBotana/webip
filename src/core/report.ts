@@ -14,6 +14,7 @@ import path from 'node:path';
 
 import { assessIntegrity, summariseByTool } from './coverage.js';
 import {
+  countByAudience,
   countByCategory,
   countBySeverity,
   countByTool,
@@ -70,6 +71,11 @@ export function printSummary(report: RunReport, limit = 25): void {
   for (const severity of SEVERITIES) {
     const count = stats.bySeverity[severity];
     if (count > 0) console.log(`    ${severity.padEnd(10)} ${String(count).padStart(6)}`);
+  }
+
+  console.log('\n  WHO IS AFFECTED (occurrences)');
+  for (const [audience, count] of Object.entries(stats.byAudience).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${audience.padEnd(16)} ${String(count).padStart(6)}`);
   }
 
   console.log('\n  BY CATEGORY');
@@ -431,6 +437,7 @@ export function buildReport(input: {
       occurrencesTotal: countOccurrences(findings),
       bySeverity: countBySeverity(findings),
       byCategory: countByCategory(findings),
+      byAudience: countByAudience(findings),
       byTool: countByTool(findings),
     },
     issues: rollupIssues(findings, input.sitesScanned),

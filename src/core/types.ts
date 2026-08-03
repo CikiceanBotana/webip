@@ -23,6 +23,8 @@ export type ToolName =
   | 'ibm-equal-access'
   | 'lighthouse'
   | 'layout'
+  | 'contrast'
+  | 'branding'
   | 'html-validate'
   | 'nu-validator'
   | 'lychee'
@@ -48,6 +50,15 @@ export const CATEGORIES = [
   'scan',
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
+
+/**
+ * WHO is affected. Severity answers "how bad", this answers "bad for whom",
+ * and without it a report sorts a trailing slash that affects nobody above a
+ * dead checkout link. On one 357-site sweep, 76% of all occurrences were
+ * developer-only spec deviations; they drowned 170 dead links.
+ */
+export const AUDIENCES = ['visitor', 'assistive-tech', 'search', 'developer'] as const;
+export type Audience = (typeof AUDIENCES)[number];
 
 /**
  * ONE concrete occurrence: the exact thing that is wrong, in one exact place.
@@ -88,6 +99,8 @@ export interface Finding {
   rule: string;
   /** Tool-independent classification. Always set. */
   category: Category;
+  /** Who actually feels this. Always set. */
+  audience: Audience;
   severity: Severity;
   /** One line, human readable. */
   title: string;
@@ -154,6 +167,8 @@ export interface RunConfig {
     ibm: boolean;
     lighthouse: boolean;
     layout: boolean;
+    contrast: boolean;
+    branding: boolean;
     htmlValidate: boolean;
     nuValidator: boolean;
     lychee: boolean;
@@ -243,6 +258,7 @@ export interface Issue {
   tool: ToolName;
   rule: string;
   category: Category;
+  audience: Audience;
   severity: Severity;
   /** Plain-English name of the defect. */
   title: string;
@@ -282,6 +298,7 @@ export interface RunReport {
     occurrencesTotal: number;
     bySeverity: Record<Severity, number>;
     byCategory: Record<string, number>;
+    byAudience: Record<string, number>;
     byTool: Record<string, number>;
   };
   /** Rolled up per rule: the fix plan. */

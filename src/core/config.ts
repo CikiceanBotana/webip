@@ -23,6 +23,8 @@ export const DEFAULT_CONFIG: RunConfig = {
     ibm: true,
     lighthouse: true,
     layout: true,
+    contrast: true,
+    branding: true,
     htmlValidate: true,
     nuValidator: true,
     lychee: true,
@@ -133,6 +135,8 @@ export function parseArgs(argv: readonly string[]): CliOptions {
         tools.ibm = false;
         tools.lighthouse = false;
         tools.layout = false;
+        tools.contrast = false;
+        tools.branding = false;
         break;
       case '--no-links':
         tools.lychee = false;

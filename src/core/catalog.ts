@@ -17,10 +17,12 @@
  * This is deliberately data, not logic. Adding a rule is adding an entry.
  */
 
-import type { Category, ToolName } from './types.js';
+import type { Audience, Category, ToolName } from './types.js';
 
 export interface RuleInfo {
   category: Category;
+  /** Who feels this. Resolved for every rule; see audienceFor. */
+  audience?: Audience;
   /** Plain-English defect. Falls back to the tool's own message when absent. */
   whatIsWrong?: string;
   /** The change to make. */
@@ -273,6 +275,65 @@ const OWN_RULES: Record<string, RuleInfo> = {
     howToFix: 'Return the same Content-Type from both methods.',
   },
 
+  // --- measured contrast ----------------------------------------------------
+  'contrast/contrast-over-image': {
+    category: 'accessibility',
+    audience: 'assistive-tech',
+    whatIsWrong:
+      'Text does not have enough contrast against what is actually rendered behind it. These are the cases the static engines cannot judge: the text is semi-transparent, or sits on a gradient, an image, or a stack of translucent layers, so its real colour only exists once the page is composited. Measured here by hiding the glyphs, screenshotting the page and sampling the pixels behind every line of text.',
+    howToFix:
+      'Raise the text opacity, darken or lighten the layer behind it, or put a solid backing behind the text. Judge it at the WORST point reported, not the average: a gradient is only as readable as its lightest region under light text.',
+    standards: wcag('1.4.3'),
+  },
+
+  // --- branding -------------------------------------------------------------
+  'branding/logo-missing': {
+    category: 'seo',
+    audience: 'visitor',
+    whatIsWrong:
+      'The header brand is plain text with no image or SVG, so the site has no visual mark at all.',
+    howToFix: 'Add a logo image or inline SVG inside the header link to the site root.',
+  },
+  'branding/logo-broken': {
+    category: 'seo',
+    audience: 'visitor',
+    whatIsWrong:
+      'The header logo is an image that failed to load, so visitors see a broken image or nothing where the brand should be.',
+    howToFix: 'Fix the logo URL, or serve the asset from a host that resolves.',
+  },
+  'branding/logo-wordmark-only': {
+    category: 'seo',
+    audience: 'visitor',
+    whatIsWrong:
+      'The brand mark is the business name set as type, with no symbol. That is legitimate -- logotypes are explicitly exempt from the images-of-text rule -- but a wide strip of text carries no identity at small sizes, cannot serve as a favicon, app icon or social avatar, and is usually a generated placeholder nobody replaced.',
+    howToFix:
+      'Add a distinct mark that still reads at 32x32, and keep the wordmark for the full-width header lockup. Whether the current one looks good is a design judgement this scan does not make; what it reports is that there is no symbol, only type.',
+  },
+  'branding/logo-name-overridden': {
+    category: 'accessibility',
+    audience: 'assistive-tech',
+    whatIsWrong:
+      'The link wrapping the logo carries an aria-label, which overrides the alt text on the image inside it. The alt is never announced, so two names are being maintained and only one is heard -- they will drift apart.',
+    howToFix:
+      'Keep the aria-label on the link and set alt="" on the image, or drop the aria-label and let the alt describe it. Not both.',
+    standards: wcag('1.1.1', '4.1.2'),
+  },
+  'branding/favicon-missing': {
+    category: 'seo',
+    audience: 'visitor',
+    whatIsWrong:
+      'The document declares no <link rel="icon">. Browsers fall back to /favicon.ico only if the server happens to serve one; nothing is guaranteed, no resolution is specified, and tab strips, bookmarks, history and search results have no icon to show.',
+    howToFix:
+      'Add <link rel="icon" href="/favicon.svg" type="image/svg+xml"> plus a 32x32 PNG fallback to <head>.',
+  },
+  'branding/apple-touch-icon-missing': {
+    category: 'seo',
+    audience: 'visitor',
+    whatIsWrong:
+      'No apple-touch-icon is declared, so a site saved to an iOS home screen gets a blurry screenshot of the page instead of an icon.',
+    howToFix: 'Add <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">.',
+  },
+
   // --- links ---------------------------------------------------------------
   'lychee/link-timeout': {
     category: 'links',
@@ -373,6 +434,8 @@ const TOOL_CATEGORY: Record<ToolName, Category> = {
   'ibm-equal-access': 'accessibility',
   lighthouse: 'performance',
   layout: 'layout',
+  contrast: 'accessibility',
+  branding: 'seo',
   'html-validate': 'markup',
   'nu-validator': 'markup',
   lychee: 'links',
@@ -391,6 +454,52 @@ const TOOL_FALLBACK: Partial<Record<ToolName, string>> = {
   'axe-core': 'Follow the linked Deque rule documentation.',
   lighthouse: 'Follow the audit guidance in the description.',
 };
+
+/**
+ * Markup rules that are true spec deviations with no runtime consequence.
+ *
+ * These are not "less important" in the abstract -- they are important to the
+ * codebase and meaningless to every visitor. Ranking them by the same severity
+ * scale as a broken link is what produced a report that was 76% noise.
+ */
+const DEVELOPER_ONLY = new Set([
+  'html-validate/no-inline-style',
+  'html-validate/attr-case',
+  'html-validate/attribute-empty-style',
+  'html-validate/attribute-boolean-style',
+  'html-validate/void-style',
+  'html-validate/attr-quotes',
+  'html-validate/no-trailing-whitespace',
+  'html-validate/element-permitted-content',
+  'html-validate/no-implicit-button-type',
+  'html-validate/long-title',
+]);
+
+/** Markup rule ids that DO reach a user, via assistive technology. */
+const ASSISTIVE_MARKUP = /aria|label|landmark|heading|alt\b|lang\b|role|fieldset|legend|input|form|title/i;
+
+/** Resolves who is affected. Never returns undefined. */
+export function audienceFor(tool: ToolName, rule: string, category: Category): Audience {
+  if (DEVELOPER_ONLY.has(`${tool}/${rule}`)) return 'developer';
+
+  if (tool === 'html-validate' || tool === 'nu-validator') {
+    return ASSISTIVE_MARKUP.test(rule) ? 'assistive-tech' : 'developer';
+  }
+
+  switch (category) {
+    case 'accessibility':
+      return 'assistive-tech';
+    case 'seo':
+      return 'search';
+    case 'markup':
+      return 'developer';
+    case 'scan':
+      return 'developer';
+    default:
+      // links, transport, layout, performance, security
+      return 'visitor';
+  }
+}
 
 export interface ClassifyInput {
   tool: ToolName;

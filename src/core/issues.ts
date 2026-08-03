@@ -15,7 +15,15 @@
  */
 
 import { severityRank } from './finding.js';
-import type { Category, Finding, Issue, IssueScope, Severity, ToolName } from './types.js';
+import type {
+  Audience,
+  Category,
+  Finding,
+  Issue,
+  IssueScope,
+  Severity,
+  ToolName,
+} from './types.js';
 
 /** Concrete examples kept per issue. Enough to see the pattern, not a dump. */
 const EXAMPLES_PER_ISSUE = 8;
@@ -32,6 +40,7 @@ interface Accumulator {
   tool: ToolName;
   rule: string;
   category: Category;
+  audience: Audience;
   severity: Severity;
   title: string;
   whatIsWrong?: string;
@@ -77,6 +86,7 @@ export function rollupIssues(findings: readonly Finding[], totalSites: number): 
         tool: finding.tool,
         rule: finding.rule,
         category: finding.category,
+        audience: finding.audience,
         severity: finding.severity,
         title: finding.title,
         ...(finding.detail !== undefined ? { whatIsWrong: finding.detail } : {}),
@@ -142,6 +152,7 @@ export function rollupIssues(findings: readonly Finding[], totalSites: number): 
         tool: entry.tool,
         rule: entry.rule,
         category: entry.category,
+        audience: entry.audience,
         severity: entry.severity,
         title: entry.title,
         whatIsWrong: entry.whatIsWrong ?? entry.title,

@@ -13,6 +13,7 @@
 import type { Page } from 'playwright';
 
 import { makeFinding, truncate } from '../../core/finding.js';
+import { ensureNameShim } from './shim.js';
 import type { Finding, PageTarget, Severity } from '../../core/types.js';
 
 /** WCAG 2.2 SC 2.5.8 Target Size (Minimum) is 24x24 CSS pixels. */
@@ -389,26 +390,6 @@ export interface LayoutOptions {
   /** Also re-measure overflow at a phone viewport. */
   mobilePass?: boolean;
   mobileViewport?: { width: number; height: number };
-}
-
-/**
- * Installs an identity `__name` shim in the page.
- *
- * tsx/esbuild compiles with keepNames, which rewrites every inner function as
- * `__name(fn, "fn")` to preserve `Function.prototype.name`. That helper is
- * defined in the Node module scope, so when Playwright serialises
- * collectLayoutIssues into the browser the reference is dangling and every
- * layout check dies with "__name is not defined".
- *
- * Passed as a STRING expression on purpose: a function argument would itself be
- * compiled by esbuild and could reference the very helper it is trying to
- * define. Playwright runs it through the debugger protocol, so it is not
- * subject to the page's Content-Security-Policy.
- */
-async function ensureNameShim(page: Page): Promise<void> {
-  await page.evaluate(
-    '(() => { if (typeof globalThis.__name !== "function") { globalThis.__name = function (f) { return f; }; } })()',
-  );
 }
 
 /**
