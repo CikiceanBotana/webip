@@ -23,6 +23,6 @@
     "noEmit": true,
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist", "out", "bin"]
 }

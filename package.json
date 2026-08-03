@@ -13,6 +13,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "versions": "tsx scripts/versions.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
     "install:lychee": "./scripts/install-lychee.sh"
   },
   "dependencies": {
