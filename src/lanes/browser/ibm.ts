@@ -63,6 +63,66 @@ function contrastOf(message: string | undefined): { measured: string; expected: 
 }
 
 /**
+ * equal-access rule -> the WCAG success criteria it implements.
+ *
+ * Hand-writing this for 174 rules would be a large table that rots on every
+ * upstream release. It is not necessary: the checker ships its own rulesets,
+ * and each one is a list of checkpoints (`num`, `scId`, `name`, `wcagLevel`)
+ * carrying the rules that test them. Decode that and every rule is mapped at
+ * once, by the vendor, always in step with the installed version -- the same
+ * approach axe gets through its `wcag143`-style tags.
+ *
+ * Built once per process and cached. A rule may implement more than one
+ * criterion (`img_alt_redundant` fails both 1.1.1 and 2.4.4), so this is a
+ * one-to-many map and every criterion is kept.
+ */
+interface IbmCheckpoint {
+  num?: string;
+  name?: string;
+  wcagLevel?: string;
+  rules?: Array<{ id?: string }>;
+}
+
+let wcagByRule: Map<string, string[]> | null = null;
+
+async function standardsForRule(ruleId: string | undefined): Promise<string[] | undefined> {
+  if (!ruleId) return undefined;
+
+  if (wcagByRule === null) {
+    const collected = new Map<string, Set<string>>();
+    try {
+      const rulesets = (await (
+        aChecker as unknown as {
+          getRulesets: () => Promise<Array<{ id?: string; checkpoints?: IbmCheckpoint[] }>>;
+        }
+      ).getRulesets()) as Array<{ id?: string; checkpoints?: IbmCheckpoint[] }>;
+
+      // Prefer the newest WCAG ruleset; the IBM_* ones add house rules that are
+      // not success criteria, and citing those as "WCAG" would be a lie.
+      const wcagSets = rulesets.filter((set) => (set.id ?? '').startsWith('WCAG_'));
+      const newest = wcagSets.sort((a, b) => (a.id ?? '').localeCompare(b.id ?? '')).at(-1);
+
+      for (const checkpoint of newest?.checkpoints ?? []) {
+        if (!checkpoint.num) continue;
+        const level = checkpoint.wcagLevel ? ` (${checkpoint.wcagLevel.toUpperCase()})` : '';
+        const label = `WCAG SC ${checkpoint.num} ${checkpoint.name ?? ''}`.trim() + level;
+        for (const rule of checkpoint.rules ?? []) {
+          if (!rule.id) continue;
+          const seen = collected.get(rule.id) ?? new Set<string>();
+          seen.add(label);
+          collected.set(rule.id, seen);
+        }
+      }
+    } catch {
+      // An unreadable ruleset costs the standards column, nothing else.
+    }
+    wcagByRule = new Map([...collected].map(([id, set]) => [id, [...set].sort()]));
+  }
+
+  return wcagByRule.get(ruleId);
+}
+
+/**
  * equal-access appends the entire finding as a URL-encoded fragment to its help
  * link, producing 800-character URLs. Keep the document, drop the fragment.
  */
@@ -100,6 +160,8 @@ export async function checkIbm(
     const severity = severityFromLevel(result.level);
     if (severity === null) continue;
 
+    const standards = await standardsForRule(result.ruleId);
+
     findings.push(
       makeFinding({
         site: target.site,
@@ -122,6 +184,7 @@ export async function checkIbm(
             ...(contrastOf(result.message) ?? {}),
           },
         ],
+        ...(standards && standards.length > 0 ? { standards } : {}),
         ...(cleanHelpUrl(result.help) ? { helpUrl: cleanHelpUrl(result.help) as string } : {}),
         ...(evidence ? { evidence } : {}),
       }),

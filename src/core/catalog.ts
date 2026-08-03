@@ -277,10 +277,11 @@ const OWN_RULES: Record<string, RuleInfo> = {
 
   // --- transport -----------------------------------------------------------
   'fetch/unreachable': {
-    category: 'transport',
-    whatIsWrong: 'The page could not be fetched at all: DNS, TLS, connection or timeout failure.',
+    category: 'scan',
+    whatIsWrong:
+      'The fast lane got no HTTP response for this page after several attempts -- a DNS, TLS, connection or timeout failure. That is a fact about the request, not about the site: it is equally consistent with the host rate-limiting the scan as with the page being down. A 404 or a 500 is an answer and is judged separately.',
     howToFix:
-      'Confirm the host resolves, the certificate is valid and the origin answers within the timeout.',
+      'Compare with the browser lane: if Chromium loaded the same URL, the fast lane was throttled and the page is fine -- lower `httpConcurrency` and re-run. If both lanes failed, confirm the host resolves, the certificate is valid and the origin answers within the timeout.',
   },
   'fetch/head-request-fails': {
     category: 'transport',
@@ -306,9 +307,12 @@ const OWN_RULES: Record<string, RuleInfo> = {
   // --- measured contrast ----------------------------------------------------
   'contrast/contrast-over-image': {
     category: 'accessibility',
-    audience: 'assistive-tech',
+    // A sighted visitor, emphatically. A screen reader does not render colour;
+    // the person who reported the defect that led to this rule reported it
+    // because he could SEE the paragraph was faded.
+    audience: 'visitor',
     whatIsWrong:
-      'Text does not have enough contrast against what is actually rendered behind it. These are the cases the static engines cannot judge: the text is semi-transparent, or sits on a gradient, an image, or a stack of translucent layers, so its real colour only exists once the page is composited. Measured here by hiding the glyphs, screenshotting the page and sampling the pixels behind every line of text.',
+      'Text does not have enough contrast against what is actually rendered behind it. These are the cases the static engines cannot judge: the text is semi-transparent, or sits on a gradient, an image, or a stack of translucent layers, so its real colour only exists once the page is composited. Note that the layer behind the text is usually NOT one of its ancestors -- in the standard hero the photo and its scrim are absolutely-positioned siblings of the box holding the text -- so the answer cannot be read off the markup at all. Measured here by screenshotting the page twice, once with the glyphs made transparent, and sampling the real pixels wherever a glyph was actually painted.',
     howToFix:
       'Raise the text opacity, darken or lighten the layer behind it, or put a solid backing behind the text. Judge it at the WORST point reported, not the average: a gradient is only as readable as its lightest region under light text.',
     standards: wcag('1.4.3'),
@@ -506,6 +510,33 @@ const DEVELOPER_ONLY = new Set([
 /** Markup rule ids that DO reach a user, via assistive technology. */
 const ASSISTIVE_MARKUP = /aria|label|landmark|heading|alt\b|lang\b|role|fieldset|legend|input|form|title/i;
 
+/**
+ * Accessibility rules whose beneficiary is somebody LOOKING at the page.
+ *
+ * "Accessibility" is not a synonym for "screen reader". A screen reader does
+ * not render colour at all, so routing every accessibility finding to
+ * `assistive-tech` buries the ones that affect ordinary sighted visitors --
+ * contrast, focus rings, tap targets, instructions that say "click the green
+ * button". On the four-site showcase run that was **841 of 1,437** occurrences
+ * in the assistive-tech bucket, including a hero paragraph at 1.97:1 that the
+ * site's own owner reported because he could see it was faded.
+ *
+ * Anyone filtering to `audience: "visitor"` -- which is the whole point of the
+ * axis -- would have filtered out the defect they were looking for.
+ */
+const VISUAL_ACCESSIBILITY = new RegExp(
+  [
+    'contrast', // every engine's contrast rules, ours included
+    'color[_-]?misuse|use[_-]?of[_-]?colou?r|link-in-text-block', // colour as the only cue
+    'focus[_-]?visible|focus[_-]?indicator', // sighted keyboard users
+    '(tap|touch|target)[_-]?(target|size)', // fingers, not screen readers
+    'sensory', // "press the round button on the right"
+    'reflow|zoom|user-scalable|meta-viewport|text[_-]?spacing', // resizing the page
+    'blink|marquee', // motion
+  ].join('|'),
+  'i',
+);
+
 /** Resolves who is affected. Never returns undefined. */
 export function audienceFor(tool: ToolName, rule: string, category: Category): Audience {
   if (DEVELOPER_ONLY.has(`${tool}/${rule}`)) return 'developer';
@@ -514,9 +545,12 @@ export function audienceFor(tool: ToolName, rule: string, category: Category): A
     return ASSISTIVE_MARKUP.test(rule) ? 'assistive-tech' : 'developer';
   }
 
+  // The contrast lane exists only to answer contrast questions.
+  if (tool === 'contrast') return 'visitor';
+
   switch (category) {
     case 'accessibility':
-      return 'assistive-tech';
+      return VISUAL_ACCESSIBILITY.test(rule) ? 'visitor' : 'assistive-tech';
     case 'seo':
       return 'search';
     case 'markup':

@@ -23,6 +23,7 @@ import { classify } from '../src/core/catalog.js';
 import { CoverageTracker, assessIntegrity, summariseByTool } from '../src/core/coverage.js';
 import { MAX_INSTANCES, collapse, countOccurrences, makeFinding } from '../src/core/finding.js';
 import { rollupIssues, scopeFor } from '../src/core/issues.js';
+import { fetchPage } from '../src/core/net.js';
 import { parseStream } from '../src/core/stream.js';
 import type { Finding, FindingInstance, ToolName } from '../src/core/types.js';
 import {
@@ -415,6 +416,113 @@ describe('a navigation that survives a phone viewport without adapting to it', (
       hidden: [],
     };
     assert.equal(assessCrowding(wide, stacked).touching.length, 0);
+  });
+});
+
+describe('audience says who actually feels it', () => {
+  it('routes visual accessibility defects to the sighted visitor, not to assistive tech', () => {
+    // A screen reader does not render colour. Filing contrast, focus rings and
+    // tap targets under assistive-tech hides them from the one filter --
+    // audience: "visitor" -- that a site owner actually uses.
+    for (const [tool, rule] of [
+      ['contrast', 'contrast-over-image'],
+      ['axe-core', 'color-contrast'],
+      ['lighthouse', 'color-contrast'],
+      ['ibm-equal-access', 'text_contrast_sufficient'],
+      ['ibm-equal-access', 'style_color_misuse'],
+      ['ibm-equal-access', 'style_focus_visible'],
+      ['ibm-equal-access', 'text_sensory_misuse'],
+      ['axe-core', 'target-size'],
+      ['axe-core', 'meta-viewport'],
+    ] as Array<[ToolName, string]>) {
+      const f = finding({ tool, rule, category: 'accessibility', title: 'x' });
+      assert.equal(f.audience, 'visitor', `${tool}/${rule} was filed away from the person who sees it`);
+    }
+  });
+
+  it('still routes genuinely screen-reader-only defects to assistive tech', () => {
+    for (const [tool, rule] of [
+      ['axe-core', 'aria-prohibited-attr'],
+      ['ibm-equal-access', 'aria_navigation_label_unique'],
+      ['semantics', 'form-label'],
+    ] as Array<[ToolName, string]>) {
+      const f = finding({ tool, rule, category: 'accessibility', title: 'x' });
+      assert.equal(f.audience, 'assistive-tech', `${tool}/${rule} is not a visual defect`);
+    }
+  });
+});
+
+describe('one transport failure is not evidence', () => {
+  /** Swaps the global fetch for the duration of one call and counts attempts. */
+  async function withFetch<T>(
+    impl: (url: string, init: RequestInit) => Promise<Response>,
+    body: () => Promise<T>,
+  ): Promise<{ result: T | Error; calls: number }> {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      calls += 1;
+      return impl(url, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      return { result: await body(), calls };
+    } catch (err) {
+      return { result: err as Error, calls };
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
+  it('retries a reset connection and believes the eventual success', async () => {
+    // Six pages of one host were reported `critical: unreachable` on a single
+    // failed attempt each. All six answered 200 to curl moments later.
+    let attempt = 0;
+    const { result, calls } = await withFetch(
+      async () => {
+        attempt += 1;
+        if (attempt < 3) throw new TypeError('fetch failed');
+        return new Response('<html><body>fine</body></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        });
+      },
+      () => fetchPage('https://example.test/contact', { attempts: 3 }),
+    );
+
+    assert.ok(!(result instanceof Error), 'a transient failure must not become a verdict');
+    assert.equal(result.status, 200);
+    assert.equal(calls, 3);
+  });
+
+  it('does not retry an HTTP status, because a 404 is an answer', async () => {
+    const { result, calls } = await withFetch(
+      async () => new Response('nope', { status: 404 }),
+      () => fetchPage('https://example.test/gone', { attempts: 3 }),
+    );
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.status, 404);
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1, 'asking again does not make a 404 a different answer');
+  });
+
+  it('gives up after the allowed attempts and says how many it made', async () => {
+    const { result, calls } = await withFetch(
+      async () => {
+        throw new TypeError('fetch failed');
+      },
+      () => fetchPage('https://example.test/down', { attempts: 3 }),
+    );
+
+    assert.ok(result instanceof Error);
+    assert.match(result.message, /after 3 attempts/);
+    assert.equal(calls, 3);
+  });
+
+  it('classifies a fetch failure as a scan problem, never as a site defect', () => {
+    // No HTTP response was received, so there is no evidence about the site.
+    const info = classify({ tool: 'fetch', rule: 'unreachable' });
+    assert.equal(info.category, 'scan');
   });
 });
 

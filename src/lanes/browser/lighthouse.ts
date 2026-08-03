@@ -7,10 +7,44 @@
  * the same browser -- the worker calls this strictly after the page checks.
  */
 
+import axe from 'axe-core';
 import lighthouse from 'lighthouse';
 
+import { standardsFromAxeTags } from '../../core/catalog.js';
 import { makeFinding, truncate } from '../../core/finding.js';
 import type { Finding, FindingInstance, PageTarget, Severity } from '../../core/types.js';
+
+/**
+ * Lighthouse's accessibility category IS axe: the audit ids are axe rule ids
+ * (`color-contrast`, `link-name`, `aria-prohibited-attr`). Lighthouse strips
+ * the tags on the way through, so those findings arrived with no standards at
+ * all while the identical finding from our own axe adapter carried
+ * "WCAG SC 1.4.3 (AA)".
+ *
+ * Rather than hand-maintain a second table, read the tags back off axe itself
+ * and decode them with the same function the axe adapter uses. Built once, and
+ * only for audit ids axe actually knows -- a Lighthouse-only audit such as
+ * `first-contentful-paint` is not a success criterion and correctly gets none.
+ */
+let axeTags: Map<string, readonly string[]> | null = null;
+
+function standardsForAudit(auditId: string | undefined): string[] | undefined {
+  if (!auditId) return undefined;
+  if (axeTags === null) {
+    axeTags = new Map();
+    try {
+      for (const rule of axe.getRules() as Array<{ ruleId?: string; tags?: string[] }>) {
+        if (rule.ruleId) axeTags.set(rule.ruleId, rule.tags ?? []);
+      }
+    } catch {
+      // Without the tag table the standards column is empty; nothing else breaks.
+    }
+  }
+  const tags = axeTags.get(auditId);
+  if (!tags) return undefined;
+  const decoded = standardsFromAxeTags(tags);
+  return decoded.length > 0 ? decoded : undefined;
+}
 
 /** Categories worth reporting on, and how seriously to take a failure in each. */
 const CATEGORIES = ['performance', 'accessibility', 'best-practices', 'seo'] as const;
@@ -244,6 +278,14 @@ export async function checkLighthouse(
           title: `${category.title ?? categoryId} score ${Math.round(category.score * 100)}/100`,
           detail: `Lighthouse scored this page ${Math.round(category.score * 100)} out of 100 for ${category.title ?? categoryId}. The individual audits that cost points are reported alongside this.`,
           remedy: 'Work through the failing audits for this category, reported as separate findings on the same page.',
+          instances: [
+            {
+              message: `${category.title ?? categoryId} score for this document`,
+              measured: `${Math.round(category.score * 100)}/100`,
+              expected: '90/100 or better',
+              target: target.url,
+            },
+          ],
           ...(evidence ? { evidence } : {}),
         }),
       );
@@ -262,6 +304,28 @@ export async function checkLighthouse(
       if ((ref.weight ?? 0) === 0) continue;
 
       const instances = instancesOf(audit);
+
+      /**
+       * A page-level audit -- a metric, a missing `<meta name="description">`,
+       * a category score -- has no element to point at, but it always has a
+       * MEASUREMENT, and that measurement was previously reachable only by
+       * parsing it back out of the title string.
+       *
+       * Giving it one instance describing the document keeps the invariant
+       * uniform (every finding carries at least one pinpointed occurrence) and
+       * puts the number where every other finding keeps it, so "which pages are
+       * over 3s" is a field comparison rather than a regex over prose.
+       */
+      if (instances.length === 0) {
+        const measured = audit.displayValue?.trim();
+        instances.push({
+          message: `${audit.title ?? ref.id} — page-level result, scored ${Math.round((audit.score ?? 0) * 100)}/100 for this document`,
+          ...(measured ? { measured } : {}),
+          ...(measured ? { expected: 'a passing Lighthouse score (>= 90/100)' } : {}),
+          target: target.url,
+        });
+      }
+
       findings.push(
         makeFinding({
           site: target.site,
@@ -275,6 +339,9 @@ export async function checkLighthouse(
           detail: truncate(audit.description ?? '', 260) || undefined,
           // The audit description is Lighthouse's own fix guidance.
           remedy: truncate(audit.description ?? '', 260) || undefined,
+          ...(standardsForAudit(audit.id ?? ref.id)
+            ? { standards: standardsForAudit(audit.id ?? ref.id) as string[] }
+            : {}),
           instances,
           count: Math.max(1, instances.length),
           ...(evidence ? { evidence } : {}),

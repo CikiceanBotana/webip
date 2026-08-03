@@ -675,11 +675,17 @@ export async function checkContrast(
       category: 'accessibility',
       severity: severityForShortfall(worstRatio, AA_NORMAL),
       title: `${failures.length} text element(s) fail contrast against their rendered background (worst ${worstRatio.toFixed(2)}:1 - ${reason})`,
-      detail:
-        'These are the elements the other engines could not judge: the text is semi-transparent, or sits on a gradient, a photo, or a stack of translucent layers, so its real colour only exists once the page is composited. Note that the layer behind the text is often not one of its ancestors -- in the usual hero the photo and its scrim are absolutely-positioned siblings of the text container -- so the answer cannot be read off the markup at all. Measured here by hiding the glyphs, screenshotting the page, and sampling the actual pixels behind each line of text.' +
-        (collected.capped
-          ? ` Only the first ${MAX_ELEMENTS} eligible text runs on this page were measured, so there may be more below this list.`
-          : ''),
+      /**
+       * Run-specific facts ONLY. The standing explanation of what this rule is
+       * and how it measures lives in the catalog, and `makeFinding` joins the
+       * two -- so repeating it here produced 900 characters of near-duplicate
+       * prose in every finding, which the exact-match dedupe could not collapse.
+       */
+      ...(collected.capped
+        ? {
+            detail: `Only the first ${MAX_ELEMENTS} eligible text runs on this page were measured, so there may be more below this list.`,
+          }
+        : {}),
       remedy:
         'Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a scrim over a photo is only as good as its lightest region under light text, and the same sentence can measure 16:1 where the photo is dark and 1.8:1 forty pixels to the right.',
       standards: ['WCAG SC 1.4.3 Contrast (Minimum)'],

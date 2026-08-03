@@ -171,9 +171,26 @@ export async function runHttpLane(
           lane: 'http',
           tool: 'fetch',
           rule: 'unreachable',
-          severity: 'critical',
-          title: 'Page could not be fetched',
-          detail: reason,
+          /**
+           * A SCAN problem, not a site defect.
+           *
+           * The evidence for "this page is broken" is an HTTP response, and
+           * this branch is reached precisely when there was not one. A 404 or a
+           * 500 comes back as a status and is judged elsewhere; everything that
+           * lands here is a transport failure, which is equally consistent with
+           * the host rate-limiting us, the local network hiccuping, or the site
+           * genuinely being down.
+           *
+           * It used to be emitted as `critical`, which put six phantom rows at
+           * the very top of a report while the browser lane was loading the
+           * same six URLs without trouble in the same run.
+           */
+          category: 'scan',
+          severity: 'serious',
+          title: 'webip could not fetch this page',
+          detail: `${reason}. This is a scan problem, not a confirmed site defect: no HTTP response was received at all, so it is equally consistent with rate limiting or a network fault. Check the browser lane's result for the same URL in \`coverage\` before treating it as an outage.`,
+          remedy:
+            'Re-run the scan, and lower `httpConcurrency` if the host rate-limits. If the browser lane loaded this URL successfully, the fast lane was throttled and the page is fine.',
           instances: [{ target: page.url, message: reason }],
         }),
       );
