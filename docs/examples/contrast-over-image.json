@@ -1,0 +1,43 @@
+{
+  "id": "5037122ebd3ec087",
+  "site": "https://cuddletherapyaz.com",
+  "url": "https://cuddletherapyaz.com/services",
+  "lane": "browser",
+  "tool": "contrast",
+  "rule": "contrast-over-image",
+  "category": "accessibility",
+  "audience": "visitor",
+  "severity": "serious",
+  "title": "32 text element(s) fail contrast against their rendered background (worst 1.61:1 - text sits on a gradient; the text colour is written as oklab(), which the other engines do not parse)",
+  "detail": "Text does not have enough contrast against what is actually rendered behind it. These are the cases the static engines cannot judge: the text is semi-transparent, or sits on a gradient, an image, or a stack of translucent layers, so its real colour only exists once the page is composited. Note that the layer behind the text is usually NOT one of its ancestors -- in the standard hero the photo and its scrim are absolutely-positioned siblings of the box holding the text -- so the answer cannot be read off the markup at all. Measured here by screenshotting the page twice, once with the glyphs made transparent, and sampling the real pixels wherever a glyph was actually painted.",
+  "remedy": "Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a scrim over a photo is only as good as its lightest region under light text, and the same sentence can measure 16:1 where the photo is dark and 1.8:1 forty pixels to the right.",
+  "standards": [
+    "WCAG SC 1.4.3 Contrast (Minimum)"
+  ],
+  "instances": [
+    {
+      "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > h2.font-display.text-xl",
+      "snippet": "<h2 class=\"font-display text-xl text-primary leading-tight\">Standard Session</h2>",
+      "message": "\"Standard Session\" at 177,927 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
+      "measured": "3.50:1 (rgb(139, 80, 64) on rgb(241, 178, 160), 20px)",
+      "expected": "4.5:1"
+    },
+    {
+      "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > span.text-lg.font-semibold",
+      "snippet": "<span class=\"text-lg font-semibold text-secondary whitespace-nowrap\">$<!-- -->120</span>",
+      "message": "\"$\" at 563,930 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
+      "measured": "3.87:1 (rgb(128, 89, 48) on rgb(244, 193, 179), 18px)",
+      "expected": "4.5:1"
+    },
+    {
+      "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > span.text-lg.font-semibold",
+      "snippet": "<span class=\"text-lg font-semibold text-secondary whitespace-nowrap\">$<!-- -->120</span>",
+      "message": "\"120\" at 573,930 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
+      "measured": "3.90:1 (rgb(128, 89, 48) on rgb(244, 194, 179), 18px)",
+      "expected": "4.5:1"
+    }
+  ],
+  "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html",
+  "count": 32,
+  "_note": "instances trimmed to 3 of 32 for documentation; count (32) is the untouched total from the run; a screenshot is attached in the `evidence` field of the real finding"
+}

@@ -1,0 +1,112 @@
+{
+  "generatedFrom": "out/showcase/findings.json",
+  "schema": "webip/2",
+  "sites": [
+    "https://cuddletherapyaz.com",
+    "https://forkstead.sogood.business",
+    "https://maison-clair.sogood.business",
+    "https://somnic.sogood.business"
+  ],
+  "examples": [
+    {
+      "file": "navigation-missing.json",
+      "rule": "layout/no-mobile-navigation",
+      "category": "layout",
+      "audience": "visitor",
+      "severity": "serious",
+      "site": "https://maison-clair.sogood.business",
+      "occurrences": 3,
+      "why": "Proved by interaction: every candidate toggle was clicked and the link count re-counted."
+    },
+    {
+      "file": "navigation-cramped.json",
+      "rule": "layout/mobile-navigation-cramped",
+      "category": "layout",
+      "audience": "visitor",
+      "severity": "moderate",
+      "site": "https://forkstead.sogood.business",
+      "occurrences": 3,
+      "why": "The nav survives 390px but was never adapted -- measured in wrapped lines and pixel gaps."
+    },
+    {
+      "file": "contrast-over-image.json",
+      "rule": "contrast/contrast-over-image",
+      "category": "accessibility",
+      "audience": "visitor",
+      "severity": "serious",
+      "site": "https://cuddletherapyaz.com",
+      "occurrences": 32,
+      "why": "The answer no static engine can give: text over a photo, scrim and translucent tint."
+    },
+    {
+      "file": "contrast-static.json",
+      "rule": "axe-core/color-contrast",
+      "category": "accessibility",
+      "audience": "visitor",
+      "severity": "serious",
+      "site": "https://forkstead.sogood.business",
+      "occurrences": 2,
+      "why": "The same defect class on a solid background, where static analysis is exact."
+    },
+    {
+      "file": "screen-reader.json",
+      "rule": "ibm-equal-access/aria_navigation_label_unique",
+      "category": "accessibility",
+      "audience": "assistive-tech",
+      "severity": "serious",
+      "site": "https://maison-clair.sogood.business",
+      "occurrences": 3,
+      "why": "Assistive-technology finding carrying the WCAG criterion decoded from the vendor ruleset."
+    },
+    {
+      "file": "layout-overflow.json",
+      "rule": "layout/horizontal-overflow-mobile",
+      "category": "layout",
+      "audience": "visitor",
+      "severity": "serious",
+      "site": "https://somnic.sogood.business",
+      "occurrences": 1,
+      "why": "Demonstrated, not inferred: the probe scrolls the page and reads the offset back."
+    },
+    {
+      "file": "markup-invalid.json",
+      "rule": "nu-validator/Trailing slash on void elements has no effect and interacts badly with unquoted…",
+      "category": "markup",
+      "audience": "developer",
+      "severity": "info",
+      "site": "https://somnic.sogood.business",
+      "occurrences": 52,
+      "why": "Spec conformance from the W3C validator, classified as developer-facing."
+    },
+    {
+      "file": "seo-meta-description.json",
+      "rule": "lighthouse/meta-description",
+      "category": "seo",
+      "audience": "search",
+      "severity": "moderate",
+      "site": "https://cuddletherapyaz.com",
+      "occurrences": 1,
+      "why": "A page-level result: no element to point at, so the instance describes the document."
+    },
+    {
+      "file": "branding-favicon.json",
+      "rule": "branding/favicon-missing",
+      "category": "seo",
+      "audience": "visitor",
+      "severity": "moderate",
+      "site": "https://cuddletherapyaz.com",
+      "occurrences": 1,
+      "why": "Site-level check, verified against the network rather than the markup alone."
+    },
+    {
+      "file": "performance-lcp.json",
+      "rule": "lighthouse/largest-contentful-paint",
+      "category": "performance",
+      "audience": "visitor",
+      "severity": "minor",
+      "site": "https://somnic.sogood.business",
+      "occurrences": 1,
+      "why": "A measurement, reported as info because it is a number and not yet a defect."
+    }
+  ]
+}

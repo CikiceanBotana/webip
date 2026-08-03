@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "The four sogood tenants whose findings have been confirmed by hand against",
+    "the live pages -- three on the platform's subdomains and one on its own",
+    "apex domain, so discovery, the fast lane and the browser lane are all",
+    "exercised the way a real run exercises them.",
+    "",
+    "Every rule quoted in docs/CAPABILITIES.md is backed by output from these",
+    "four sites. Regenerate with:",
+    "  npm run scan -- --config config/showcase.json --out out/showcase",
+    "  npm run examples -- out/showcase/findings.json",
+    "",
+    "Sized to run on a modest laptop: ONE Chromium worker (the browser lane is",
+    "memory-bound at ~300MB/worker, not CPU-bound) and 6 pages per site. The",
+    "committed examples came from a 10-page-per-site pass, so a rule that only",
+    "fires deeper in a site may be absent here; `npm run examples` says so",
+    "loudly rather than quietly shipping a shorter page. Add --no-lighthouse to",
+    "drop roughly 80% of the browser lane's cost when iterating.",
+    "",
+    "Deliberately NOT seeded with https://sogood.business/: its sitemap is a",
+    "<sitemapindex> that expands into 357 tenants, which is the pilot's job, not",
+    "a documentation run's."
+  ],
+
+  "seeds": [
+    "https://somnic.sogood.business/",
+    "https://forkstead.sogood.business/",
+    "https://maison-clair.sogood.business/",
+    "https://cuddletherapyaz.com/"
+  ],
+
+  "maxSites": 4,
+  "deepSites": 4,
+  "maxPagesPerSite": 6,
+
+  "httpConcurrency": 4,
+  "browserConcurrency": 1,
+
+  "tools": {
+    "axe": true,
+    "ibm": true,
+    "lighthouse": true,
+    "layout": true,
+    "htmlValidate": true,
+    "nuValidator": true,
+    "lychee": true,
+    "semantics": true
+  },
+
+  "screenshots": true,
+  "pageTimeoutMs": 60000,
+  "cdpBasePort": 9500,
+  "outDir": "out"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "72ee88e2fbb036e8",
+  "site": "https://cuddletherapyaz.com",
+  "url": "https://cuddletherapyaz.com/pages/about",
+  "lane": "browser",
+  "tool": "lighthouse",
+  "rule": "meta-description",
+  "category": "seo",
+  "audience": "search",
+  "severity": "moderate",
+  "title": "Document does not have a meta description",
+  "detail": "Meta descriptions may be included in search results to concisely summarize page content. [Learn more about the meta description](https://developer.chrome.com/docs/lighthouse/seo/meta-description/).",
+  "remedy": "Meta descriptions may be included in search results to concisely summarize page content. [Learn more about the meta description](https://developer.chrome.com/docs/lighthouse/seo/meta-description/).",
+  "instances": [
+    {
+      "message": "Document does not have a meta description — page-level result, scored 0/100 for this document",
+      "target": "https://cuddletherapyaz.com/pages/about"
+    }
+  ],
+  "count": 1,
+  "_note": "a screenshot is attached in the `evidence` field of the real finding"
+}

@@ -1,0 +1,36 @@
+{
+  "id": "9853028416c25ff9",
+  "site": "https://maison-clair.sogood.business",
+  "url": "https://maison-clair.sogood.business/",
+  "lane": "browser",
+  "tool": "ibm-equal-access",
+  "rule": "aria_navigation_label_unique",
+  "category": "accessibility",
+  "audience": "assistive-tech",
+  "severity": "serious",
+  "title": "Multiple elements with \"navigation\" role do not have unique labels",
+  "remedy": "Follow the linked IBM Accessibility Requirements guidance for this rule.",
+  "standards": [
+    "WCAG SC 1.3.1 Info and Relationships (A)"
+  ],
+  "instances": [
+    {
+      "selector": "/html[1]/body[1]/header[1]/nav[1]",
+      "snippet": "<nav class=\"mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3\">",
+      "message": "Multiple elements with \"navigation\" role do not have unique labels"
+    },
+    {
+      "selector": "/html[1]/body[1]/footer[1]/div[1]/div[1]/nav[1]",
+      "snippet": "<nav class=\"flex flex-col gap-2\">",
+      "message": "Multiple elements with \"navigation\" role do not have unique labels"
+    },
+    {
+      "selector": "/html[1]/body[1]/footer[1]/div[1]/div[1]/nav[2]",
+      "snippet": "<nav class=\"flex flex-col gap-2\">",
+      "message": "Multiple elements with \"navigation\" role do not have unique labels"
+    }
+  ],
+  "helpUrl": "https://able.ibm.com/rules/archives/2026.07.13/doc/en-US/aria_navigation_label_unique.html",
+  "count": 3,
+  "_note": "a screenshot is attached in the `evidence` field of the real finding"
+}

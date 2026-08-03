@@ -1,0 +1,40 @@
+{
+  "id": "c9907c5f27974a39",
+  "site": "https://forkstead.sogood.business",
+  "url": "https://forkstead.sogood.business/",
+  "lane": "browser",
+  "tool": "layout",
+  "rule": "mobile-navigation-cramped",
+  "category": "layout",
+  "audience": "visitor",
+  "severity": "moderate",
+  "title": "[mobile] The navigation is the desktop row squeezed into 390px: 2 label(s) wrap onto a second line, 1 pair(s) of items sit 0px apart",
+  "detail": "The navigation survives the phone viewport but was never designed for it. The same horizontal desktop row is given a third of the width, so labels wrap onto two lines, items end up touching each other with no gap, and controls get set to display:none to buy back space. Nothing is technically broken, which is why no other check reports it, and it is the first thing a visitor sees. The header keeps all 4 of its items at 390px and never switches to a narrow layout.",
+  "remedy": "Give the header a layout for narrow widths instead of letting the desktop one compress: collapse the links behind a menu button below the breakpoint, or stack them. Whichever is chosen, keep the call-to-action reachable rather than hiding it -- it is being hidden because the row has no room, which is the same problem stated twice.",
+  "standards": [
+    "WCAG SC 1.4.10 Reflow"
+  ],
+  "instances": [
+    {
+      "selector": "html > body.flex.min-h-screen > header.sticky.top-0",
+      "snippet": "<header class=\"sticky top-0 z-50 border-b border-base-300 bg-base-100\"><nav class=\"mx-auto flex max-w-6xl items-center justify-between px-6 py-4\"><a aria-current=\"page\" class=\"font-display text-lg text-primary active\" href=\"/\" data-discover=\"true\"><img src=\"https://api.sgdinternal.com/public/logos/1b01dcf2-3ccd-4743-b6c4-0ccc052f838a.svg\" alt=\"Forkstead | Chef-prepped family dinners, ready in 15 m",
+      "message": "The desktop navigation row, at a phone width. It has no breakpoint of its own: the same flex row is simply given less space until its contents give way.",
+      "measured": "2 label(s) wrap onto a second line; 1 pair(s) of items sit 0px apart",
+      "expected": "a layout intended for 390px"
+    },
+    {
+      "target": "/services",
+      "message": "\"How it works\" wraps onto 2 lines here and 1 at the desktop width, so the row has run out of horizontal space",
+      "measured": "2 lines, 61px wide",
+      "expected": "1 line"
+    },
+    {
+      "target": "/products",
+      "message": "\"Our boxes\" wraps onto 2 lines here and 1 at the desktop width, so the row has run out of horizontal space",
+      "measured": "2 lines, 50px wide",
+      "expected": "1 line"
+    }
+  ],
+  "count": 3,
+  "_note": "instances trimmed to 3 of 4 for documentation; count (3) is the untouched total from the run; a screenshot is attached in the `evidence` field of the real finding"
+}

@@ -10,6 +10,7 @@
   "scripts": {
     "scan": "tsx src/cli.ts",
     "analyze": "tsx scripts/analyze.ts",
+    "examples": "tsx scripts/examples.ts",
     "smoke": "tsx scripts/smoke.ts",
     "versions": "tsx scripts/versions.ts",
     "typecheck": "tsc --noEmit",

@@ -1,0 +1,24 @@
+{
+  "id": "7dcc1519251fd9c5",
+  "site": "https://cuddletherapyaz.com",
+  "url": "https://cuddletherapyaz.com/",
+  "lane": "browser",
+  "tool": "branding",
+  "rule": "favicon-missing",
+  "category": "seo",
+  "audience": "visitor",
+  "severity": "moderate",
+  "title": "No favicon is declared",
+  "detail": "The document declares no <link rel=\"icon\">. Browsers fall back to /favicon.ico only if the server happens to serve one; nothing is guaranteed, no resolution is specified, and tab strips, bookmarks, history and search results have no icon to show.",
+  "remedy": "Add <link rel=\"icon\" href=\"/favicon.svg\" type=\"image/svg+xml\"> plus a 32x32 PNG fallback to <head>.",
+  "instances": [
+    {
+      "selector": "head",
+      "message": "The document declares no <link rel=\"icon\">. Browsers fall back to /favicon.ico if the server happens to serve one, but nothing is guaranteed, no resolution is specified, and bookmarks, tab strips, history and search results have no icon to show.",
+      "measured": "no icon declared",
+      "expected": "<link rel=\"icon\" href=\"...\"> in <head>"
+    }
+  ],
+  "count": 1,
+  "_note": "a screenshot is attached in the `evidence` field of the real finding"
+}

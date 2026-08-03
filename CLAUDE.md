@@ -94,8 +94,24 @@ This is not stylistic. Before it was enforced, one pilot produced:
 - 24,649 real occurrences → 5,372 rows. **78% of findings had no "where".**
 
 `count` is always the TRUE total; `instances` is capped at 50 and sets `instancesTruncated`
-when it drops any (never set when `instances` is empty — a page-level rule legitimately has
-nothing below the URL to point at).
+when it drops any (never set when `instances` is empty).
+
+**Every finding carries at least one instance**, page-level rules included. A Lighthouse
+metric has no element to point at but it does have a *number*, so its single instance
+describes the document and puts `measured`/`expected` where every other finding keeps them —
+"which pages are over 3s" is then a field comparison, not a regex over the title string.
+
+### Standards come from the vendors, never from a hand-written table
+
+A per-rule WCAG table across 279 rules would rot on every upstream release. Each engine
+already ships the mapping, so decode it:
+
+| Engine | How |
+|---|---|
+| axe-core | its own tags — `wcag143` → SC 1.4.3 (all 105 rules) |
+| IBM equal-access | `getRulesets()` → checkpoints with `num` / `name` / `wcagLevel` (163 of 174) |
+| Lighthouse a11y | audit ids **are** axe rule ids, so read the tags back off `axe.getRules()` |
+| our own rules | `src/core/catalog.ts`, written out in full because no upstream doc exists |
 
 ### The verification rule — a measurement is not a defect
 
@@ -111,6 +127,7 @@ treated as a verdict:
 | `<label>` cropped by 21px | `sr-only`: a 1×1 box with `clip-path: inset(50%)`. The clipping IS the technique — there is no sighted user to crop it from |
 | 242 broken links incl. `/api/waitlist` | A `<form action>`, POST-only. A GET from a link checker proves nothing |
 | 3 controls "blocked" by the sogood badge | Two were clickable **where they stood**; the third was free 200px down a 722px page |
+| 6 pages `critical: unreachable` | One un-retried `fetch failed`. All six answered **200 in 0.3s** to curl, and the browser lane had loaded the same URLs in the same run — the host was rate-limiting 8 concurrent requests |
 
 Twice the owner reported the opposite — a defect the scan stayed **silent** about — and both
 times a filter had thrown the evidence away before anything was measured: `MIN_TEXT_LENGTH = 2`

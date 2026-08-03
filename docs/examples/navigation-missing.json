@@ -1,0 +1,41 @@
+{
+  "id": "522ad6a416c397d2",
+  "site": "https://maison-clair.sogood.business",
+  "url": "https://maison-clair.sogood.business/",
+  "lane": "browser",
+  "tool": "layout",
+  "rule": "no-mobile-navigation",
+  "category": "layout",
+  "audience": "visitor",
+  "severity": "serious",
+  "title": "[mobile] 3 navigation link(s) disappear at 390px and no menu button brings them back",
+  "detail": "At a phone viewport the header hides its navigation links and puts nothing in their place. There is no menu button: the links are in the markup, so every static check passes, but a media query paints them out and nothing brings them back. The header collapses to a logo and the rest of the site becomes unreachable from the top of the page. Most traffic to a site like this is on a phone. The header offers 4 destination(s) at the desktop viewport and 1 at 390px. There is no menu button in the header: no button, no aria-expanded, no aria-controls, nothing named like a menu anywhere on the page. The links are simply painted out by a media query with nothing put in their place. 3 of them are still reachable further down the page (typically the footer), so navigating means scrolling to the bottom of every page.",
+  "remedy": "Add the menu button the responsive layout assumes exists: a <button aria-expanded aria-controls> in the header, shown only below the breakpoint that hides the links, which toggles a panel containing them. Keeping the links in the footer is not a substitute -- it makes every navigation a scroll to the bottom of the page.",
+  "standards": [
+    "WCAG SC 1.4.10 Reflow",
+    "WCAG SC 2.4.5 Multiple Ways"
+  ],
+  "instances": [
+    {
+      "selector": "html > body.flex.min-h-screen > header.sticky.top-0",
+      "snippet": "<header class=\"sticky top-0 z-50 bg-base-100\" style=\"border-bottom:3px solid #14110a\"><nav class=\"mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3\"><a aria-current=\"page\" class=\"shrink-0 flex items-center active\" href=\"/\" data-discover=\"true\"><img src=\"https://api.sgdinternal.com/public/logos/8220f049-9413-468e-b9d1-643618f3d254/light-ffffff.svg\" alt=\"Maison Clair\" class=\"h-9 w-",
+      "message": "The primary navigation. Look for the breakpoint class on the wrapper around the links -- a \"hidden md:flex\" or equivalent hides them below the tablet width.",
+      "measured": "1 destination(s) in the header at 390px",
+      "expected": "4 destination(s), or a menu button that reveals them"
+    },
+    {
+      "target": "/about",
+      "message": "\"About\" is in the markup but not painted at 390px; still reachable further down the page",
+      "measured": "hidden",
+      "expected": "visible, or reachable through a menu button"
+    },
+    {
+      "target": "/blog",
+      "message": "\"Blog\" is in the markup but not painted at 390px; still reachable further down the page",
+      "measured": "hidden",
+      "expected": "visible, or reachable through a menu button"
+    }
+  ],
+  "count": 3,
+  "_note": "instances trimmed to 3 of 4 for documentation; count (3) is the untouched total from the run; a screenshot is attached in the `evidence` field of the real finding"
+}

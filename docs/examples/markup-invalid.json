@@ -1,0 +1,36 @@
+{
+  "id": "4be6e8e364cc00dd",
+  "site": "https://somnic.sogood.business",
+  "url": "https://somnic.sogood.business/",
+  "lane": "http",
+  "tool": "nu-validator",
+  "rule": "Trailing slash on void elements has no effect and interacts badly with unquoted…",
+  "category": "markup",
+  "audience": "developer",
+  "severity": "info",
+  "title": "Trailing slash on void elements has no effect and interacts badly with unquoted attribute values.",
+  "remedy": "Correct the markup so it validates against the HTML specification. The W3C validator is the reference implementation browsers are measured against.",
+  "instances": [
+    {
+      "line": 1,
+      "column": 59,
+      "snippet": "al\"><head><meta charSet=\"utf-8\"/><meta",
+      "message": "Trailing slash on void elements has no effect and interacts badly with unquoted attribute values."
+    },
+    {
+      "line": 1,
+      "column": 82,
+      "snippet": "=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link",
+      "message": "Trailing slash on void elements has no effect and interacts badly with unquoted attribute values."
+    },
+    {
+      "line": 1,
+      "column": 151,
+      "snippet": "scale=1\"/><link rel=\"preload\" as=\"image\" href=\"https://api.sgdinternal.com/public/logos/6940bca7-474b-41cf-ab30-3ed6cdc…",
+      "message": "Trailing slash on void elements has no effect and interacts badly with unquoted attribute values."
+    }
+  ],
+  "count": 52,
+  "instancesTruncated": true,
+  "_note": "instances trimmed to 3 of 50 for documentation; count (52) is the untouched total from the run"
+}

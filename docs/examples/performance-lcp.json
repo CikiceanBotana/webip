@@ -1,0 +1,24 @@
+{
+  "id": "ad72d1fb5c097b3f",
+  "site": "https://somnic.sogood.business",
+  "url": "https://somnic.sogood.business/products",
+  "lane": "browser",
+  "tool": "lighthouse",
+  "rule": "largest-contentful-paint",
+  "category": "performance",
+  "audience": "visitor",
+  "severity": "minor",
+  "title": "Largest Contentful Paint (4.3 s)",
+  "detail": "Largest Contentful Paint marks the time at which the largest text or image is painted. [Learn more about the Largest Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-largest-contentful-paint/)",
+  "remedy": "Largest Contentful Paint marks the time at which the largest text or image is painted. [Learn more about the Largest Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-largest-contentful-paint/)",
+  "instances": [
+    {
+      "message": "Largest Contentful Paint — page-level result, scored 41/100 for this document",
+      "measured": "4.3 s",
+      "expected": "a passing Lighthouse score (>= 90/100)",
+      "target": "https://somnic.sogood.business/products"
+    }
+  ],
+  "count": 1,
+  "_note": "a screenshot is attached in the `evidence` field of the real finding"
+}

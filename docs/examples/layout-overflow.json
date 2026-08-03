@@ -1,0 +1,26 @@
+{
+  "id": "ac163396ef7a0a34",
+  "site": "https://somnic.sogood.business",
+  "url": "https://somnic.sogood.business/products",
+  "lane": "browser",
+  "tool": "layout",
+  "rule": "horizontal-overflow-mobile",
+  "category": "layout",
+  "audience": "visitor",
+  "severity": "serious",
+  "title": "[mobile] Page scrolls horizontally: content is 587px wide in a 390px viewport",
+  "detail": "At a 390px phone viewport: The page is wider than the viewport, so it scrolls sideways. Content is cut off until the user pans, and on touch devices vertical scrolling becomes unreliable. Horizontal scrolling on a page that is not meant to scroll sideways is one of the most common mobile layout defects.",
+  "remedy": "Find the element wider than its container (reported alongside this) and constrain it: max-width:100%, flex-wrap, or overflow-wrap on long unbroken strings.",
+  "standards": [
+    "WCAG SC 1.4.10 Reflow"
+  ],
+  "instances": [
+    {
+      "selector": "html",
+      "measured": "587px content",
+      "expected": "390px viewport"
+    }
+  ],
+  "count": 1,
+  "_note": "a screenshot is attached in the `evidence` field of the real finding"
+}

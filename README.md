@@ -10,9 +10,13 @@ A two-lane web inspection tool.
 **There is no image diffing in this project.** Screenshots are captured only as
 evidence attached to findings, and are never compared against a baseline.
 
-> **Status: tooling only.** This repository currently contains the installed and
-> verified toolchain plus a smoke test. No crawler, audit, or check logic has
-> been written yet.
+Eleven checks across both lanes normalise into one vocabulary, so a finding from
+the W3C validator and a finding from a hand-written geometry probe are sorted,
+deduplicated and explained the same way.
+
+**What it detects, with real output for every claim:
+[`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md).** Every example there is
+lifted verbatim from a scan of four live sites — none of it is illustrative.
 
 ---
 
@@ -73,6 +77,7 @@ sudo npx playwright install-deps chromium
 | --- | --- |
 | `npm run scan -- <url\|--config f>` | Runs both lanes. Exits non-zero if anything critical or serious was found. |
 | `npm run analyze -- <findings.json\|stream.jsonl>` | Prints the fix plan: platform-wide vs tenant-specific. |
+| `npm run examples -- <findings.json>` | Regenerates the worked examples in `docs/examples/` from a run. |
 | `npm test` | Unit tests for the report invariants (`node:test`, no framework to install). |
 | `npm run smoke` | Proves every tool is callable. Exits non-zero on any failure. |
 | `npm run versions` | Regenerates `versions.json` from what is installed on disk. |
