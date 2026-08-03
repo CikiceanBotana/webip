@@ -53,6 +53,7 @@ const WCAG_NAMES: Record<string, string> = {
   '2.4.2': 'Page Titled',
   '2.4.3': 'Focus Order',
   '2.4.4': 'Link Purpose (In Context)',
+  '2.4.5': 'Multiple Ways',
   '2.4.6': 'Headings and Labels',
   '2.4.7': 'Focus Visible',
   '2.5.3': 'Label in Name',
@@ -232,12 +233,39 @@ const OWN_RULES: Record<string, RuleInfo> = {
       'Increase the control to at least 24x24 CSS pixels, with padding rather than font size, or leave 24px of clear space around it.',
     standards: wcag('2.5.8'),
   },
-  'layout/interactive-overlap': {
+  'layout/control-unclickable': {
     category: 'layout',
     whatIsWrong:
-      'Two separately clickable elements sit on top of each other, so one of them is unreachable or the wrong one receives the tap.',
+      'Something else intercepts every click aimed at this control, at every position the page can scroll to, so the control cannot be operated with a mouse or a finger at all. This is verified rather than inferred: the browser is asked who receives a tap at nine points across the control, and the page is scrolled through its full range before the claim is made. Overlapping boxes on their own are not reported -- a pinned badge that covers a button only until you scroll past it is not a defect.',
     howToFix:
-      'Separate the elements, or remove the stacking/negative-margin/absolute positioning that makes them collide.',
+      'Find the element named as the interceptor and get it out of the way: lower its z-index, give it pointer-events:none if it is purely decorative, or stop it from covering interactive content.',
+  },
+  'layout/no-mobile-navigation': {
+    category: 'layout',
+    audience: 'visitor',
+    whatIsWrong:
+      'At a phone viewport the header hides its navigation links and puts nothing in their place. There is no menu button: the links are in the markup, so every static check passes, but a media query paints them out and nothing brings them back. The header collapses to a logo and the rest of the site becomes unreachable from the top of the page. Most traffic to a site like this is on a phone.',
+    howToFix:
+      'Add the menu button the responsive layout assumes exists: a <button aria-expanded aria-controls> in the header, shown only below the breakpoint that hides the links, which toggles a panel containing them. Keeping the links in the footer is not a substitute -- it makes every navigation a scroll to the bottom of the page.',
+    standards: wcag('1.4.10', '2.4.5'),
+  },
+  'layout/mobile-navigation-cramped': {
+    category: 'layout',
+    audience: 'visitor',
+    whatIsWrong:
+      'The navigation survives the phone viewport but was never designed for it. The same horizontal desktop row is given a third of the width, so labels wrap onto two lines, items end up touching each other with no gap, and controls get set to display:none to buy back space. Nothing is technically broken, which is why no other check reports it, and it is the first thing a visitor sees.',
+    howToFix:
+      'Give the header a layout for narrow widths instead of letting the desktop one compress: collapse the links behind a menu button below the breakpoint, or stack them. Whichever is chosen, keep the call-to-action reachable rather than hiding it -- it is being hidden because the row has no room, which is the same problem stated twice.',
+    standards: wcag('1.4.10'),
+  },
+  'layout/mobile-navigation-does-not-open': {
+    category: 'layout',
+    audience: 'visitor',
+    whatIsWrong:
+      'At a phone viewport the header hides its navigation links, and the control that should reveal them does not. Every plausible menu button in the header was clicked and the links stayed hidden, so the menu is wired up wrongly, broken by a script error, or animating to zero height.',
+    howToFix:
+      'Open the site at a phone width and click the menu button with the console visible. Check that its click handler is bound, that the panel it controls is not still display:none or height:0 after the state change, and that no script error aborted the handler.',
+    standards: wcag('1.4.10', '2.4.5'),
   },
   'layout/content-clipped': {
     category: 'layout',

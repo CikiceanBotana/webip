@@ -120,10 +120,21 @@ export function makeFinding(input: FindingInput): Finding {
       : {}),
   });
 
-  // The catalog's explanation wins over a tool's terse message, because it is
-  // written for someone deciding what to change. A tool-supplied detail is kept
-  // whenever the catalog has nothing more specific to say.
-  const detail = info.whatIsWrong ?? input.detail;
+  /**
+   * The catalog explains what the RULE means. A check may additionally report
+   * what it measured on THIS page. Both are kept, in that order.
+   *
+   * The catalog used to win outright, which quietly deleted the only per-page
+   * reasoning a finding carried: the mobile-navigation check computes how many
+   * destinations the header offers at each width, whether a menu button was
+   * found and clicked, and whether the lost links survive in the footer -- and
+   * all of it was replaced by the generic paragraph. A reader needs the second
+   * sentence more than the first.
+   */
+  const parts = [info.whatIsWrong, input.detail].filter(
+    (part): part is string => part !== undefined && part.trim() !== '',
+  );
+  const detail = parts.length > 0 ? [...new Set(parts)].join(' ') : undefined;
   const remedy = input.remedy ?? info.howToFix;
   const standards = input.standards ?? info.standards;
   const count = Math.max(input.count ?? instances.length, 1);

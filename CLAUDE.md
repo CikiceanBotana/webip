@@ -97,6 +97,64 @@ This is not stylistic. Before it was enforced, one pilot produced:
 when it drops any (never set when `instances` is empty — a page-level rule legitimately has
 nothing below the URL to point at).
 
+### The verification rule — a measurement is not a defect
+
+Five reported "defects" were rejected by the site owner on sight, and **every one of them was
+his**. The scan measured correctly each time and concluded wrongly, because a number was
+treated as a verdict:
+
+| Reported | Reality |
+|---|---|
+| 72 tap targets below 24px | Conforming under SC 2.5.8's **spacing** exception — nav links sat 47–110px apart |
+| Content clipped by 40px | An `aria-hidden` decorative blur blob; the text ended 56px *above* the crop |
+| 12 clipped card teasers | `-webkit-line-clamp: 2` — deliberate truncation, the design |
+| 242 broken links incl. `/api/waitlist` | A `<form action>`, POST-only. A GET from a link checker proves nothing |
+| 3 controls "blocked" by the sogood badge | Two were clickable **where they stood**; the third was free 200px down a 722px page |
+
+The pattern is always the same: **geometry that looks wrong at one instant, reported as a
+permanent fact.** The corrections are not special cases, they are the rule doing its job —
+so before adding any geometric check, ask what makes the number *not* a defect, and encode
+that first. Concretely, what the fixes look like:
+
+- **Ask the browser, do not infer.** `document.elementFromPoint` at nine points across a
+  control answers "can this be clicked" definitively. Overlapping boxes never did.
+- **A `position: fixed` overlay covers whatever is under it AT THIS SCROLL OFFSET.** Scroll
+  the full range before claiming anything is blocked. `layout.ts` §5 does, and it is
+  deliberately the LAST section because it is the only one that moves the page — scrolling
+  loads lazy images and fires reveal animations that would corrupt every rule above it.
+- **Click the thing.** `no-mobile-navigation` finds every plausible hamburger, clicks it,
+  and re-counts, so "there is no menu" is a demonstrated fact and not a failure to recognise
+  someone's class names.
+- **Prove the negative on a control group.** tailwindcss.com, getbootstrap.com,
+  developer.mozilla.org, stripe.com, github.com, wikipedia.org and news.ycombinator.com all
+  pass the mobile-nav check. Any rule that will fire across 357 templated sites gets this
+  treatment before it ships — the control group caught **three** false positives that the
+  target sites never would have (see below).
+
+### Clicking a stranger's page: what the control group caught
+
+`no-mobile-navigation` clicks candidate menu buttons to prove a hamburger is missing rather
+than assuming it. Three separate bugs, none visible on the target sites:
+
+| Symptom | Cause |
+|---|---|
+| stripe.com "menu does not open" | `cssPath` selectors are short and **not unique** — 5 candidates re-queried into **17 elements**, so it clicked through a testimonial carousel. Fixed by stamping `data-webip-toggle` on the exact nodes. |
+| stripe.com still failing | `HTMLElement.click()` is an untrusted event with no pointer sequence; a framework menu listening for `pointerdown` never reacts. Use Playwright's real input-level click. |
+| getbootstrap.com "menu does not open" | Clicking the header's **Search** button first opened a modal that covered the real "Toggle navigation" button, whose click then timed out. Fixed by ordering menu-looking candidates first and pressing Escape between attempts. |
+
+Rules that follow from this, for any future check that interacts with a page:
+- Click **one control at a time and re-check after each.** Clicking all of them and looking
+  once is worse than useless — the second click closes what the first opened.
+- **Undo** an attempt that did not help, Escape included, or the check's own side effects
+  become the reason the next candidate fails.
+- Never re-query a generated CSS path to act on an element. Mark the node, or hold a handle.
+  Note `page.locator()` re-queries at click time, so it is **not** safe here: every survey
+  clears and re-stamps the marks, and an index captured earlier then points somewhere else.
+- "Did the menu open" must count link **elements**, not hrefs. Nearly every template repeats
+  its nav in the footer, so "is /pricing visible" is already true before anything is clicked.
+  A panel opening adds *another* anchor to the same href, and that increase is the signal —
+  it survives both the footer copy and a menu portalled outside the header.
+
 ### findings.json layout (`schema: "webip/2"`)
 
 Ordered conclusion → evidence: `integrity` → `stats` → `issues` → `findings` → `coverage`.
@@ -140,6 +198,11 @@ Because all tenants render one platform template, the useful question is
 platform-wide / widespread / tenant-specific.
 
 ### Confirmed defects
+- **No navigation on a phone.** The header ships `<div class="hidden md:flex">` around the nav
+  links and **no menu button exists at any width** — 0 buttons in the header, verified by
+  clicking. Below the `md` breakpoint the header is a logo and a bag icon; every other page is
+  reachable only by scrolling to the footer. This is the platform template, so it is every
+  tenant. Rule: `layout/no-mobile-navigation`.
 - **`HEAD /` returns 404 `application/json` while `GET /` returns 200 `text/html`** on the hub.
   Breaks CDN caches, uptime monitors, link checkers, social preview crawlers.
 - Tenant sitemaps list pages that **404** (e.g. `pawdium.../blog`).

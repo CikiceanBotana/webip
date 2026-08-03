@@ -45,9 +45,6 @@ const SAMPLE_STEP = 3;
 /** Cap on elements measured per page, worst-first is not knowable up front. */
 const MAX_ELEMENTS = 400;
 
-/** Skip runs of text shorter than this; single stray characters are noise. */
-const MIN_TEXT_LENGTH = 2;
-
 interface Candidate {
   index: number;
   text: string;
@@ -80,10 +77,16 @@ interface Measured {
  */
 function collectCandidates(opts: {
   maxElements: number;
-  minTextLength: number;
-}): { candidates: Candidate[]; scrollX: number; scrollY: number; viewportWidth: number } {
-  const { maxElements, minTextLength } = opts;
+}): {
+  candidates: Candidate[];
+  scrollX: number;
+  scrollY: number;
+  viewportWidth: number;
+  capped: boolean;
+} {
+  const { maxElements } = opts;
   const candidates: Candidate[] = [];
+  let eligible = 0;
 
   const cssPath = (el: Element): string => {
     const parts: string[] = [];
@@ -185,15 +188,29 @@ function collectCandidates(opts: {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let index = 0;
 
-  for (
-    let current = walker.nextNode();
-    current !== null && candidates.length < maxElements;
-    current = walker.nextNode()
-  ) {
+  for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
     const value = (current.nodeValue ?? '').trim();
     const parent = current.parentElement;
 
-    if (!parent || value.length < minTextLength) continue;
+    /**
+     * Anything that paints a glyph is measured, including a run of exactly one
+     * character.
+     *
+     * This used to skip text shorter than two characters, on the theory that a
+     * lone glyph is stray noise. That assumption hid a real defect: a
+     * testimonial rating built as five separate `<span>*</span>` elements, one
+     * character each, sitting at 1.20:1 on a green panel. Invisible on the
+     * page, and discarded here before a single pixel was sampled, purely for
+     * being one character long.
+     *
+     * The symbols that carry the most meaning per glyph are exactly the ones
+     * written this way -- star ratings, tick marks, close crosses, arrows,
+     * currency signs, icon-font glyphs -- and they are also the ones a designer
+     * colours by eye and never measures. Runs that paint nothing are still
+     * skipped, but by whether they occupy area, which is asked further down
+     * where the line rectangles are collected.
+     */
+    if (!parent || value === '') continue;
     const tag = parent.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TITLE') continue;
     if (parent.getAttribute('aria-hidden') === 'true') continue;
@@ -227,6 +244,11 @@ function collectCandidates(opts: {
     const fontSize = parseFloat(style.fontSize) || 16;
     const weight = parseInt(style.fontWeight, 10) || 400;
 
+    // Counted before the cap is applied, so the report can say how much text it
+    // did NOT look at. A silent cap reads exactly like a clean page.
+    eligible += 1;
+    if (candidates.length >= maxElements) continue;
+
     candidates.push({
       index: index++,
       text: value.slice(0, 80),
@@ -245,6 +267,7 @@ function collectCandidates(opts: {
     scrollX: window.scrollX,
     scrollY: window.scrollY,
     viewportWidth: window.innerWidth,
+    capped: eligible > candidates.length,
   };
 }
 
@@ -366,10 +389,7 @@ export async function checkContrast(
 ): Promise<Finding[]> {
   await ensureNameShim(page);
 
-  const collected = await page.evaluate(collectCandidates, {
-    maxElements: MAX_ELEMENTS,
-    minTextLength: MIN_TEXT_LENGTH,
-  });
+  const collected = await page.evaluate(collectCandidates, { maxElements: MAX_ELEMENTS });
 
   if (collected.candidates.length === 0) return [];
 
@@ -430,7 +450,10 @@ export async function checkContrast(
       severity: severityForShortfall(worstRatio, AA_NORMAL),
       title: `${failures.length} text element(s) fail contrast against their rendered background (worst ${worstRatio.toFixed(2)}:1 - ${reason})`,
       detail:
-        'These are the elements the other engines could not judge: the text is semi-transparent, or sits on a gradient, image or stack of translucent layers, so its real colour only exists once the page is composited. Measured here by hiding the glyphs, screenshotting the page, and sampling the actual pixels behind each line of text.',
+        'These are the elements the other engines could not judge: the text is semi-transparent, or sits on a gradient, image or stack of translucent layers, so its real colour only exists once the page is composited. Measured here by hiding the glyphs, screenshotting the page, and sampling the actual pixels behind each line of text.' +
+        (collected.capped
+          ? ` Only the first ${MAX_ELEMENTS} eligible text runs on this page were measured, so there may be more below this list.`
+          : ''),
       remedy:
         'Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a gradient is only as good as its lightest region under light text.',
       standards: ['WCAG SC 1.4.3 Contrast (Minimum)'],

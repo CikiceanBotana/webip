@@ -13,6 +13,7 @@
 import type { Page } from 'playwright';
 
 import { makeFinding, truncate } from '../../core/finding.js';
+import { checkMobileNavigation, surveyNavigation, type NavSurvey } from './navigation.js';
 import { ensureNameShim } from './shim.js';
 import type { Finding, PageTarget, Severity } from '../../core/types.js';
 
@@ -270,52 +271,7 @@ function collectLayoutIssues(opts: {
     });
   }
 
-  // ---- 4. Overlapping interactive elements ---------------------------------
-  // Two separately clickable things sitting on top of each other means one of
-  // them is unreachable, or the wrong one receives the tap.
-  const candidates = interactive.slice(0, 250);
-  const overlaps: LayoutInstance[] = [];
-  for (let i = 0; i < candidates.length && overlaps.length < maxInstances; i += 1) {
-    const a = candidates[i] as HTMLElement;
-    const ra = a.getBoundingClientRect();
-    if (ra.width === 0 || ra.height === 0) continue;
-
-    for (let j = i + 1; j < candidates.length; j += 1) {
-      const b = candidates[j] as HTMLElement;
-      // Nested controls legitimately share space.
-      if (a.contains(b) || b.contains(a)) continue;
-      const rb = b.getBoundingClientRect();
-      if (rb.width === 0 || rb.height === 0) continue;
-
-      const overlapW = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
-      const overlapH = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
-      if (overlapW <= 1 || overlapH <= 1) continue;
-
-      const overlapArea = overlapW * overlapH;
-      const smaller = Math.min(ra.width * ra.height, rb.width * rb.height);
-      if (smaller > 0 && overlapArea / smaller > 0.4) {
-        overlaps.push({
-          selector: cssPath(a),
-          snippet: outerHtml(a),
-          message: `Overlaps "${cssPath(b)}"; one of the two is likely unclickable`,
-          measured: `${Math.round((overlapArea / smaller) * 100)}% overlap`,
-          expected: 'no overlap between separate controls',
-        });
-        break;
-      }
-    }
-  }
-  if (overlaps.length > 0) {
-    issues.push({
-      rule: 'interactive-overlap',
-      severity: 'serious',
-      title: `${overlaps.length} pair(s) of interactive elements overlap by more than 40%`,
-      count: overlaps.length,
-      instances: overlaps,
-    });
-  }
-
-  // ---- 5. Content clipped by a fixed-height container ----------------------
+  // ---- 4. Content clipped by a fixed-height container ----------------------
   /**
    * The lowest point of real, rendered TEXT inside an element.
    *
@@ -390,6 +346,171 @@ function collectLayoutIssues(opts: {
     });
   }
 
+  // ---- 5. Controls that genuinely cannot be clicked -------------------------
+  /**
+   * Runs LAST, because it is the only section that moves the page. Scrolling
+   * loads lazy images and fires reveal animations, which would change what
+   * every rule above measured.
+   *
+   * Overlapping boxes are NOT evidence, and the previous version of this rule
+   * treated them as if they were. Two things it got wrong on one real page:
+   *
+   *   - Boxes can overlap by 90% with both controls perfectly clickable. The
+   *     element on top may be transparent to pointers, or the overlapping
+   *     region may lie outside the part either one actually responds to. Two of
+   *     three reported controls were reachable exactly where they stood.
+   *   - A `position: fixed` badge covers whatever happens to be under it AT
+   *     THIS SCROLL OFFSET. Scroll, and the content comes out from under it.
+   *     The third control was free 200px further down a 722px page.
+   *
+   * All three were false. So geometry is only the cheap filter now; the claim
+   * is settled by asking the browser who receives the tap, and by scrolling to
+   * see whether the obstruction is permanent or merely where we happened to be
+   * standing. A control is only reported when it is unreachable at EVERY
+   * position the page can scroll to.
+   */
+  const overlapping: HTMLElement[] = [];
+  const seenSuspect = new Set<HTMLElement>();
+  const candidates = interactive.slice(0, 250);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const a = candidates[i] as HTMLElement;
+    const ra = a.getBoundingClientRect();
+    if (ra.width === 0 || ra.height === 0) continue;
+
+    for (let j = i + 1; j < candidates.length; j += 1) {
+      const b = candidates[j] as HTMLElement;
+      // Nested controls legitimately share space.
+      if (a.contains(b) || b.contains(a)) continue;
+      const rb = b.getBoundingClientRect();
+      if (rb.width === 0 || rb.height === 0) continue;
+
+      const overlapW = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+      const overlapH = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+      if (overlapW <= 1 || overlapH <= 1) continue;
+
+      const smaller = Math.min(ra.width * ra.height, rb.width * rb.height);
+      if (smaller > 0 && (overlapW * overlapH) / smaller > 0.4) {
+        for (const el of [a, b]) {
+          if (!seenSuspect.has(el)) {
+            seenSuspect.add(el);
+            overlapping.push(el);
+          }
+        }
+      }
+    }
+  }
+
+  /** The centre plus an inset grid: a control is usable if ANY of it responds. */
+  const hitPoints = (r: DOMRect): Array<{ x: number; y: number }> => {
+    const points: Array<{ x: number; y: number }> = [];
+    for (const fx of [0.5, 0.15, 0.85]) {
+      for (const fy of [0.5, 0.2, 0.8]) {
+        points.push({ x: r.left + r.width * fx, y: r.top + r.height * fy });
+      }
+    }
+    return points;
+  };
+
+  /**
+   * Who receives a tap on this element, at the current scroll offset.
+   *
+   * An ancestor answering counts as reachable: that means the element declined
+   * the point itself (pointer-events, most often), which is a different defect
+   * and not something covering it.
+   */
+  const probeReach = (el: HTMLElement): { reachable: boolean; blocker: Element | null } => {
+    const rect = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const vh = window.innerHeight;
+    let blocker: Element | null = null;
+    let tested = 0;
+
+    for (const point of hitPoints(rect)) {
+      if (point.x < 0 || point.y < 0 || point.x >= vw || point.y >= vh) continue;
+      tested += 1;
+      const hit = document.elementFromPoint(point.x, point.y);
+      if (!hit) continue;
+      if (hit === el || el.contains(hit) || hit.contains(el)) {
+        return { reachable: true, blocker: null };
+      }
+      if (!blocker) blocker = hit;
+    }
+
+    // Entirely off-screen at this offset: no evidence either way, not a defect.
+    if (tested === 0) return { reachable: true, blocker: null };
+    return { reachable: false, blocker };
+  };
+
+  const unclickable: LayoutInstance[] = [];
+  let unclickableTotal = 0;
+  const docEl = document.documentElement;
+  const originalScrollY = window.scrollY;
+  const originalBehaviour = docEl.style.scrollBehavior;
+  // A stylesheet-level `scroll-behavior: smooth` would animate these probes and
+  // every measurement would read a position the page has not arrived at yet.
+  docEl.style.scrollBehavior = 'auto';
+
+  try {
+    const maxScroll = Math.max(0, docEl.scrollHeight - window.innerHeight);
+
+    for (const el of overlapping.slice(0, 20)) {
+      const here = probeReach(el);
+      if (here.reachable) continue;
+
+      // Unreachable where it stands. Is it unreachable everywhere?
+      const rect = el.getBoundingClientRect();
+      const documentCentre = window.scrollY + rect.top + rect.height / 2;
+      let blocker = here.blocker;
+      let escaped = false;
+      const visited = new Set<number>([Math.round(window.scrollY)]);
+
+      for (const fraction of [0.5, 0.25, 0.75, 0.12, 0.88]) {
+        const y = Math.round(
+          Math.max(0, Math.min(maxScroll, documentCentre - window.innerHeight * fraction)),
+        );
+        if (visited.has(y)) continue;
+        visited.add(y);
+        window.scrollTo(0, y);
+        const there = probeReach(el);
+        if (there.reachable) {
+          escaped = true;
+          break;
+        }
+        if (there.blocker) blocker = there.blocker;
+      }
+      if (escaped) continue;
+
+      unclickableTotal += 1;
+      if (unclickable.length < maxInstances) {
+        const pinned = blocker
+          ? ['fixed', 'sticky'].includes(window.getComputedStyle(blocker).position)
+          : false;
+        unclickable.push({
+          selector: cssPath(el),
+          snippet: outerHtml(el),
+          message: blocker
+            ? `Every point of this control is intercepted by "${cssPath(blocker)}"${pinned ? ', a pinned overlay that stays over it' : ''} at all ${visited.size} scroll positions tested. Clicking it activates the other element.`
+            : `No point of this control receives a click at any of the ${visited.size} scroll positions tested.`,
+          measured: blocker ? `taps land on ${cssPath(blocker)}` : 'taps land on nothing',
+          expected: 'the control itself receives the click',
+        });
+      }
+    }
+  } finally {
+    window.scrollTo(0, originalScrollY);
+    docEl.style.scrollBehavior = originalBehaviour;
+  }
+
+  if (unclickableTotal > 0) {
+    issues.push({
+      rule: 'control-unclickable',
+      severity: 'serious',
+      title: `${unclickableTotal} control(s) cannot be clicked: something else intercepts every tap`,
+      count: unclickableTotal,
+      instances: unclickable,
+    });
+  }
+
   return issues;
 }
 
@@ -437,6 +558,13 @@ export async function checkLayout(
 
   await ensureNameShim(page);
 
+  // The navigation inventory has to be taken BEFORE the page is resized: the
+  // whole question is what the phone viewport loses relative to this.
+  let desktopNav: NavSurvey | null = null;
+  if (opts.mobilePass) {
+    desktopNav = await surveyNavigation(page).catch(() => null);
+  }
+
   const desktop = await page.evaluate(collectLayoutIssues, {
     minTapTarget: MIN_TAP_TARGET,
     tolerance: OVERFLOW_TOLERANCE,
@@ -461,6 +589,19 @@ export async function checkLayout(
         issues.filter((i) => i.rule.includes('overflow')),
         'mobile',
       );
+
+      // Last, because it clicks things: a menu opened here must not be able to
+      // change what the geometry above measured.
+      if (desktopNav) {
+        findings.push(
+          ...(await checkMobileNavigation(
+            target,
+            page,
+            { desktop: desktopNav, viewportWidth: mobile.width },
+            evidence,
+          )),
+        );
+      }
     } finally {
       if (original) await page.setViewportSize(original);
     }

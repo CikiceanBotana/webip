@@ -25,6 +25,11 @@ import { MAX_INSTANCES, collapse, countOccurrences, makeFinding } from '../src/c
 import { rollupIssues, scopeFor } from '../src/core/issues.js';
 import { parseStream } from '../src/core/stream.js';
 import type { Finding, FindingInstance, ToolName } from '../src/core/types.js';
+import {
+  assessCrowding,
+  compareNavigation,
+  type NavSurvey,
+} from '../src/lanes/browser/navigation.js';
 
 function finding(over: Partial<Parameters<typeof makeFinding>[0]> = {}): Finding {
   return makeFinding({
@@ -273,6 +278,143 @@ describe('issues answer "fix once or fix everywhere"', () => {
       'identical examples teach nothing on a templated network',
     );
     assert.ok(issue.howToFix.length > 0);
+  });
+});
+
+describe('a finding keeps what was measured, not just what the rule means', () => {
+  it('carries the catalog explanation AND the check\'s own detail', () => {
+    const f = finding({
+      tool: 'layout',
+      rule: 'no-mobile-navigation',
+      detail: 'The header offers 4 destination(s) at 1280px and 1 at 390px.',
+    });
+    assert.match(f.detail ?? '', /media query/, 'the catalog explanation is present');
+    assert.match(f.detail ?? '', /4 destination/, 'the measured detail is present');
+  });
+
+  it('does not repeat an identical sentence twice', () => {
+    const info = classify({ tool: 'layout', rule: 'no-mobile-navigation' });
+    const f = finding({
+      tool: 'layout',
+      rule: 'no-mobile-navigation',
+      detail: info.whatIsWrong ?? '',
+    });
+    assert.equal(f.detail, info.whatIsWrong);
+  });
+});
+
+describe('a phone viewport that loses the navigation', () => {
+  const survey = (hrefs: string[]): NavSurvey => ({
+    scope: 'header',
+    scopeSnippet: '<header></header>',
+    links: hrefs.map((href) => ({ href, text: href })),
+    hidden: [],
+    toggles: [],
+    pageHrefs: hrefs,
+  });
+
+  const wide = survey(['/', '/products', '/about', '/blog', '/contact']);
+
+  it('reports a header that collapses to nothing but its own logo', () => {
+    const verdict = compareNavigation(wide, survey(['/']));
+    assert.equal(verdict.collapsed, true);
+    assert.equal(verdict.offered.length, 4, 'the logo is not a destination');
+    assert.equal(verdict.lost.length, 4);
+  });
+
+  it('reports a header left with a single destination', () => {
+    // What the real template does: logo plus a bag icon, three links painted out.
+    const verdict = compareNavigation(wide, survey(['/', '/products']));
+    assert.equal(verdict.collapsed, true);
+    assert.deepEqual(
+      verdict.lost.map((l) => l.href),
+      ['/about', '/blog', '/contact'],
+    );
+  });
+
+  it('stays silent when the menu is merely rearranged', () => {
+    assert.equal(compareNavigation(wide, survey(['/', '/products', '/about'])).collapsed, false);
+    assert.equal(compareNavigation(wide, survey(wide.links.map((l) => l.href))).collapsed, false);
+  });
+
+  it('stays silent when one link is dropped, or there was no navigation at all', () => {
+    const verdict = compareNavigation(wide, survey(['/', '/products', '/about', '/blog']));
+    assert.equal(verdict.collapsed, false, 'one dropped link is a design choice');
+    assert.equal(
+      compareNavigation(survey(['/', '/only']), survey(['/'])).collapsed,
+      false,
+      'a one-link header cannot lose its navigation',
+    );
+  });
+});
+
+describe('a navigation that survives a phone viewport without adapting to it', () => {
+  /** The real forkstead.sogood.business header, measured at both widths. */
+  const row = (
+    items: Array<[href: string, text: string, x: number, w: number, lines: number]>,
+    hiddenItems: Array<[string, string]> = [],
+  ): NavSurvey => ({
+    scope: 'header',
+    scopeSnippet: '<header></header>',
+    links: items.map(([href, text, x, w, lines]) => ({
+      href,
+      text,
+      box: { x, y: 16, w, h: lines * 20 },
+      lines,
+    })),
+    hidden: hiddenItems.map(([href, text]) => ({ href, text })),
+    toggles: [],
+    pageHrefs: items.map(([href]) => href),
+  });
+
+  const wide = row([
+    ['/', 'logo', 88, 172, 1],
+    ['/services', 'How it works', 811, 81, 1],
+    ['/products', 'Our boxes', 916, 66, 1],
+    ['/about', 'About', 1006, 38, 1],
+    ['/products?cta', 'See our boxes', 1068, 124, 1],
+  ]);
+
+  const narrow = row(
+    [
+      ['/', 'logo', 24, 145, 1],
+      ['/services', 'How it works', 169, 61, 2],
+      ['/products', 'Our boxes', 254, 50, 2],
+      ['/about', 'About', 328, 38, 1],
+    ],
+    [['/products?cta', 'See our boxes']],
+  );
+
+  it('measures the wrapping, the touching pair and the dropped control', () => {
+    const report = assessCrowding(wide, narrow);
+    assert.equal(report.cramped, true);
+    assert.deepEqual(
+      report.wrapped.map((w) => w.link.text),
+      ['How it works', 'Our boxes'],
+    );
+    assert.equal(report.touching.length, 1, 'the logo butts straight into the first link');
+    assert.equal(report.touching[0]?.gap, 0);
+    assert.deepEqual(
+      report.dropped.map((d) => d.text),
+      ['See our boxes'],
+    );
+  });
+
+  it('stays silent when the same row simply has more room', () => {
+    assert.equal(assessCrowding(wide, wide).cramped, false);
+  });
+
+  it('does not count a second row as a touching pair', () => {
+    // Links stacked vertically: each starts at x=0, which is not a tiny gap.
+    const stacked: NavSurvey = {
+      ...narrow,
+      links: [
+        { href: '/a', text: 'A', box: { x: 0, y: 0, w: 100, h: 20 }, lines: 1 },
+        { href: '/b', text: 'B', box: { x: 0, y: 40, w: 100, h: 20 }, lines: 1 },
+      ],
+      hidden: [],
+    };
+    assert.equal(assessCrowding(wide, stacked).touching.length, 0);
   });
 });
 
