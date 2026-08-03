@@ -71,22 +71,64 @@ sudo npx playwright install-deps chromium
 
 | Command | Does |
 | --- | --- |
+| `npm run scan -- <url\|--config f>` | Runs both lanes. Exits non-zero if anything critical or serious was found. |
+| `npm run analyze -- <findings.json\|stream.jsonl>` | Prints the fix plan: platform-wide vs tenant-specific. |
+| `npm test` | Unit tests for the report invariants (`node:test`, no framework to install). |
 | `npm run smoke` | Proves every tool is callable. Exits non-zero on any failure. |
 | `npm run versions` | Regenerates `versions.json` from what is installed on disk. |
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm run install:lychee` | Re-fetches the pinned lychee binary. |
 
+```bash
+npm run scan -- https://example.com --fast-only
+npm run scan -- --config config/sogood.json --out out/pilot
+npm run analyze -- out/pilot/findings.json
+```
+
+## Output
+
+Every run writes three things to `--out`:
+
+| File | What |
+| --- | --- |
+| `findings.json` | The consolidated record. **This is the deliverable.** |
+| `report.html` | The same data, self-contained, readable in a browser. |
+| `stream.jsonl` | Write-ahead log, appended as findings are produced. |
+
+`findings.json` (`schema: "webip/2"`) is ordered conclusion → evidence:
+
+| Key | What it answers |
+| --- | --- |
+| `integrity` | *Can this run be trusted at all?* `ok: false` means a tool failed on everything it attempted — its silence means "broken", not "clean". |
+| `stats` | Totals by severity, category and tool. `occurrencesTotal` is the true count; `findingsTotal` is rows. |
+| `issues` | **The fix plan.** Each defect once, with `whatIsWrong`, `howToFix`, `standards`, `scope` (platform/widespread/tenant) and pinpointed `examples`. |
+| `findings` | Every rule on every page, with `instances[]` — each carrying `selector`, `snippet`, `line`/`column`, `target` and `measured` vs `expected`. |
+| `coverage` | Per page, per tool: `ok` / `error` / `skipped`. Proves a zero-finding page was checked rather than merely skipped. |
+| `errors` | Problems with the scan itself, not with the site. |
+
+A finding never says only *how many*. `count` is the true total and `instances`
+names the occurrences (capped at 50, flagged with `instancesTruncated`), so
+"14 tap targets too small" comes with the selector and measured size of each.
+
+If a run is killed, `stream.jsonl` still holds everything produced up to that
+moment — one JSON value per line, so a half-written final line costs one record.
+`npm run analyze` reads it directly.
+
 ## Layout
 
 ```
+src/core/            finding vocabulary, catalog, rollup, coverage, streaming, report
+src/discover/        seed -> sites -> pages
 src/lanes/http/      browser-free checks
 src/lanes/browser/   chromium checks
-src/fingerprint/     layout fingerprint extraction (empty for now)
+src/orchestrator.ts  runs both lanes concurrently; contains no checking logic
+src/fingerprint/     reserved; empty
 bin/                 downloaded binaries (lychee) — gitignored
 config/              per-target config
 out/                 run output — gitignored
 out/evidence/        screenshots attached to findings
-scripts/             smoke test, version manifest, installers
+scripts/             analyzer, smoke test, version manifest, installers
+tests/               invariant tests
 ```
 
 ## Toolchain
