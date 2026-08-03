@@ -111,6 +111,12 @@ treated as a verdict:
 | 242 broken links incl. `/api/waitlist` | A `<form action>`, POST-only. A GET from a link checker proves nothing |
 | 3 controls "blocked" by the sogood badge | Two were clickable **where they stood**; the third was free 200px down a 722px page |
 
+Twice the owner reported the opposite — a defect the scan stayed **silent** about — and both
+times a filter had thrown the evidence away before anything was measured: `MIN_TEXT_LENGTH = 2`
+discarded fifteen one-character `★` at 1.20:1, and an ancestors-only backdrop walk discarded a
+whole hero at 2.02:1. A silent check and a clean page are indistinguishable in the output, so
+**every filter that drops evidence needs the same scepticism as every rule that emits it.**
+
 The pattern is always the same: **geometry that looks wrong at one instant, reported as a
 permanent fact.** The corrections are not special cases, they are the rule doing its job —
 so before adding any geometric check, ask what makes the number *not* a defect, and encode
@@ -154,6 +160,64 @@ Rules that follow from this, for any future check that interacts with a page:
   its nav in the footer, so "is /pricing visible" is already true before anything is clicked.
   A panel opening adds *another* anchor to the same href, and that increase is the signal —
   it survives both the footer copy and a menu portalled outside the header.
+
+### Contrast: the backdrop is not in the markup, and a rect is not a glyph
+
+Two independent bugs in `contrast.ts`, both found on live sites, both from believing the DOM
+instead of the compositor.
+
+**1. The layer behind the text is usually not an ancestor.** `unresolvableBackdrop` walked
+*up* the tree, so it only ever saw ancestors. The standard hero puts the photo and its scrim
+in absolutely-positioned **siblings**:
+
+```html
+<section class="relative isolate">
+  <div class="absolute inset-0"><img class="object-cover">
+    <div class="absolute inset-0 bg-gradient-to-b from-neutral/55"></div></div>
+  <div class="mx-auto max-w-3xl"><p class="text-white/90">      <!-- SIBLING -->
+```
+
+Walking up from that `<p>` finds transparent boxes all the way to an opaque `<body>`, so the
+check concluded *"solid backdrop — axe already answered this"* and skipped it. axe had not:
+it returned INCOMPLETE for all nine text runs on the page. The one tool that can resolve a
+composited backdrop declined to look, and somnic shipped a hero paragraph at **2.02:1**.
+Now three things mark text as unresolvable — an ancestor image/gradient/translucent stack,
+**any non-ancestor layer whose box intersects the text**, and a colour written in a space the
+other engines cannot parse (`oklab()`, `lab()`, `oklch()` — all of Tailwind 4).
+Over-inclusion is free here: the pixel sampler is the judge, so text that turns out to sit on
+an opaque card simply passes.
+
+**2. A text node with a rectangle is not text that is painted.** Widening the filter lit up
+five of seven control sites. Every phantom was laid out and never drawn:
+
+| Site | What it was |
+|---|---|
+| stripe.com | `<svg><defs><mask><text>Sign in` — a stencil, has a box, never painted |
+| stripe.com | a card translated out of a carousel whose `overflow:hidden` ancestor ends 370px to its left |
+| stripe.com | `<span class="navigation-button-measure">` at `opacity:0` — exists only to measure a width |
+| tailwindcss.com | ghost frames of the hero typing animation |
+| github.com, wikipedia.org | text under an opaque overlay |
+
+Enumerating those in CSS is a losing game — every one was a stranger's page doing something
+reasonable the rule had not imagined, and `opacity` does not even inherit as a computed value.
+So: **screenshot twice, once normally and once with `color: transparent`. Pixels that CHANGED
+are exactly where a glyph landed.** No enumeration, no heuristic, whatever the reason.
+github 3→0, wikipedia 1→0, stripe 28→7, tailwind 64→22, and the survivors all recompute by
+hand (tailwind's own `lab()` code tokens really are 2.71:1 on white).
+
+Details that are load-bearing:
+- Take the mask cut at **half the peak delta** in each rect. Antialiased glyph edges blend
+  toward the background and would drag every ratio toward 1:1.
+- Sample the background from the *hidden* shot but composite the foreground from the
+  **declared colour**, never from the sampled glyph pixel — that pixel carries the antialiasing.
+- If nearly every pixel changed (>85%), the BACKGROUND moved between shots — a canvas or
+  WebGL animation — and the mask is meaningless. Say nothing.
+- Masking makes claims *smaller*, and that is the point: an unmasked probe read the somnic
+  `<h1>` at 1.73:1, but no glyph ever sat on that pixel. It was leading. The h1 passes.
+- Text painted in exactly its background colour yields no delta and is skipped. Deliberate —
+  invisible-on-solid is the one case static analysis nails, so axe and IBM already own it.
+- Use one small scratch canvas resized per rect. Two full-page canvases of a 1280×14600 page
+  is ~150MB in a worker budgeted at ~300MB.
 
 ### findings.json layout (`schema: "webip/2"`)
 

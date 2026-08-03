@@ -39,8 +39,22 @@ const AA_LARGE = 3;
 const LARGE_PX = 24;
 const LARGE_BOLD_PX = 18.66;
 
-/** Sample step in CSS pixels across each text line. Finer costs time, not accuracy. */
-const SAMPLE_STEP = 3;
+/**
+ * How much a pixel must change when the glyphs are hidden before it counts as
+ * one a glyph was painted on. Summed across R, G and B, so ~8 levels a channel.
+ * Below this the two screenshots are the same picture and nothing was drawn.
+ */
+const GLYPH_MIN_DELTA = 24;
+
+/**
+ * Glyphs cover part of a line box, never all of it -- a dense bold heading
+ * reaches roughly 40%. Past this the whole box changed, which means the
+ * background moved between the screenshots, not that the text is enormous.
+ */
+const GLYPH_MAX_COVERAGE = 0.85;
+
+/** Sampling budget per line rectangle; larger rects are strided down to fit. */
+const MAX_SAMPLES_PER_RECT = 20000;
 
 /** Cap on elements measured per page, worst-first is not knowable up front. */
 const MAX_ELEMENTS = 400;
@@ -149,40 +163,136 @@ function collectCandidates(opts: {
     ];
   };
 
+  /** Alpha of any computed colour, exactly, in any colour space. 0 = fully transparent. */
+  const alphaOf = (css: string): number => resolveColour(css)?.[3] ?? 0;
+
+  /**
+   * Everything on the page that paints something no static engine can reduce to
+   * one flat colour: a photo, a gradient, or a translucent fill. Boxes are in
+   * document coordinates so text can be tested against what is really behind
+   * it. Collected once for the whole document, not once per text node.
+   */
+  const layers: Array<{ el: Element; x: number; y: number; w: number; h: number; kind: string }> =
+    [];
+  for (const el of Array.from(document.body.querySelectorAll('*'))) {
+    const s = window.getComputedStyle(el);
+    if (s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) === 0) continue;
+
+    const tag = el.tagName.toUpperCase();
+    let kind: string | null = null;
+    if (tag === 'IMG' || tag === 'PICTURE' || tag === 'VIDEO' || tag === 'CANVAS' || tag === 'SVG') {
+      kind = 'an image';
+    } else if (s.backgroundImage !== 'none') {
+      kind = s.backgroundImage.startsWith('url') ? 'a background image' : 'a gradient';
+    } else {
+      const a = alphaOf(s.backgroundColor);
+      if (a > 0.001 && a < 0.999) kind = 'a translucent tint';
+    }
+    if (kind === null) continue;
+
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    layers.push({
+      el,
+      x: r.left + window.scrollX,
+      y: r.top + window.scrollY,
+      w: r.width,
+      h: r.height,
+      kind,
+    });
+  }
+
   /**
    * Is this text sitting on something a static engine cannot resolve?
    *
-   * Only those are measured. Text on a plain solid colour is already handled
-   * correctly by axe and IBM, and duplicating them would add noise without
-   * adding an answer.
+   * Only those are measured. Text in a plain `rgb()` on a plain solid colour is
+   * already handled correctly by axe and IBM, and duplicating them would add
+   * noise without adding an answer.
+   *
+   * Three things make a backdrop unresolvable, and the first version of this
+   * function only knew about one of them -- the ancestor chain. That misses the
+   * single most common hero on the modern web:
+   *
+   *     <section class="relative isolate">
+   *       <div class="absolute inset-0">          <- the photo and its scrim
+   *         <img class="object-cover">
+   *         <div class="absolute inset-0 bg-gradient-to-b from-neutral/55">
+   *       </div>
+   *       <div class="mx-auto max-w-3xl">         <- a SIBLING, holding the text
+   *         <p class="text-white/90">
+   *
+   * Walking up from that `<p>` finds nothing but transparent boxes until it
+   * reaches `<body>`, which is an opaque cream -- so the old code concluded
+   * "solid backdrop, axe already answered this" and skipped it before a single
+   * pixel was sampled. axe had NOT answered it; it returned an INCOMPLETE
+   * ("background color could not be determined due to a background gradient")
+   * for all nine text runs on that page. The one check that can resolve a
+   * composited backdrop declined to look, and the defect fell through the gap:
+   * a hero paragraph at 1.84:1, and a heading at 1.73:1, on a live site.
+   *
+   * Over-inclusion here is cheap and safe -- the pixel sampler is the actual
+   * judge, and text that turns out to sit on an opaque card simply passes.
+   * Under-inclusion is the failure mode, because it is silent.
    */
-  const unresolvableBackdrop = (el: Element): string | null => {
+  const unresolvableBackdrop = (
+    el: Element,
+    rects: ReadonlyArray<{ x: number; y: number; w: number; h: number }>,
+    colourCss: string,
+  ): string | null => {
+    const reasons: string[] = [];
+
+    // 1. The ancestor chain: the classic case, and the only one that can be
+    //    decided without geometry.
     let node: Element | null = el;
     let translucentLayers = 0;
+    let ancestorVerdict: string | null = null;
     while (node && node !== document.documentElement) {
       const s = window.getComputedStyle(node);
       if (s.backgroundImage !== 'none') {
-        return s.backgroundImage.startsWith('url')
+        ancestorVerdict = s.backgroundImage.startsWith('url')
           ? 'text sits on a background image'
           : 'text sits on a gradient';
+        break;
       }
-      const bg = s.backgroundColor;
-      const match = /rgba?\(([^)]+)\)/.exec(bg);
-      if (match?.[1]) {
-        const parts = match[1].split(',').map((v) => parseFloat(v));
-        const a = parts.length > 3 ? (parts[3] ?? 1) : 1;
-        if (a >= 0.999) {
-          // Reached an opaque solid backdrop.
-          return translucentLayers > 0 ? 'text sits on stacked translucent layers' : null;
-        }
-        if (a > 0) translucentLayers += 1;
-      } else if (bg !== 'transparent' && !bg.startsWith('rgba(0, 0, 0, 0)')) {
-        // A colour in a space the regex does not cover (oklab, lab, color()).
-        translucentLayers += 1;
-      }
+      const a = alphaOf(s.backgroundColor);
+      if (a >= 0.999) break; // reached an opaque solid backdrop
+      if (a > 0) translucentLayers += 1;
       node = node.parentElement;
     }
-    return translucentLayers > 0 ? 'text sits on stacked translucent layers' : null;
+    if (ancestorVerdict !== null) reasons.push(ancestorVerdict);
+    else if (translucentLayers > 0) reasons.push('text sits on stacked translucent layers');
+
+    // 2. Anything painted behind it that is NOT an ancestor.
+    const behind = new Set<string>();
+    for (const layer of layers) {
+      if (layer.el.contains(el)) continue; // an ancestor: already judged above
+      if (el.contains(layer.el)) continue; // inside the text: in front, not behind
+      for (const r of rects) {
+        if (
+          layer.x < r.x + r.w &&
+          layer.x + layer.w > r.x &&
+          layer.y < r.y + r.h &&
+          layer.y + layer.h > r.y
+        ) {
+          behind.add(layer.kind);
+          break;
+        }
+      }
+    }
+    if (behind.size > 0) {
+      const list = [...behind];
+      const tail = list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0];
+      reasons.push(`${tail} sits behind it, painted by an element that is not its ancestor`);
+    }
+
+    // 3. A colour the other engines cannot read. Tailwind 4 emits `oklab()`,
+    //    which no contrast engine parses, so even a solid backdrop leaves the
+    //    question open when the text colour is written this way.
+    if (!/^rgba?\(/.test(colourCss.trim())) {
+      reasons.push(`the text colour is written as ${colourCss.split('(')[0]}(), which the other engines do not parse`);
+    }
+
+    return reasons.length > 0 ? reasons.join('; ') : null;
   };
 
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -219,14 +329,13 @@ function collectCandidates(opts: {
     if (style.visibility === 'hidden' || style.display === 'none') continue;
     if (Number(style.opacity) === 0) continue;
 
-    const reason = unresolvableBackdrop(parent);
-    if (reason === null) continue; // solid backdrop: axe already answered this
-
     const colour = resolveColour(style.color);
     if (!colour) continue;
 
     // Per-line rects, so we sample where glyphs actually are rather than across
-    // a padded block box.
+    // a padded block box. Computed BEFORE the backdrop question is asked,
+    // because "what is painted behind this text" is answered geometrically and
+    // there is nothing to test against until the lines have positions.
     const range = document.createRange();
     range.selectNodeContents(current);
     const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
@@ -240,6 +349,9 @@ function collectCandidates(opts: {
       });
     }
     if (rects.length === 0) continue;
+
+    const reason = unresolvableBackdrop(parent, rects, style.color);
+    if (reason === null) continue; // solid backdrop, plain colour: axe answered this
 
     const fontSize = parseFloat(style.fontSize) || 16;
     const weight = parseInt(style.fontWeight, 10) || 400;
@@ -287,28 +399,73 @@ function showGlyphs(): void {
   document.getElementById('__webip_hide_text')?.remove();
 }
 
-/** In-page: sample the screenshot behind each candidate and find the worst ratio. */
+/**
+ * In-page: find where each candidate's glyphs are ACTUALLY painted, and sample
+ * the background only there.
+ *
+ * A text node having a rectangle does not mean anything is drawn in it, and
+ * this check spent a version believing that it did. The control group found
+ * three separate ways for the belief to be wrong, none of which is visible in
+ * the computed style of the text's own element:
+ *
+ *   - stripe.com had "Sign in" inside `<svg><defs><mask><text>`. Text in a
+ *     `<defs>`, `<mask>`, `<clipPath>` or `<symbol>` has a layout box and is
+ *     never painted -- it is a stencil for something else.
+ *   - stripe.com had a product card translated out of a carousel whose
+ *     `overflow: hidden` ancestor ends 370px to its left. Clipped away, still
+ *     fully laid out.
+ *   - tailwindcss.com had ghost frames of its hero typing animation, and a
+ *     `<span>` at `opacity: 0` that exists only to measure a width. `opacity`
+ *     does not inherit as a computed value, so an ancestor at 0 leaves the
+ *     text's own style reading `opacity: 1`.
+ *
+ * Enumerating those cases in CSS is a losing game; every one of them was found
+ * by a stranger's page doing something reasonable that the rule had not
+ * imagined. So do not enumerate: ask the compositor. Screenshot the page once
+ * normally and once with the glyphs made transparent. Pixels that CHANGED are
+ * exactly the pixels where a glyph was painted, whatever the reason it was or
+ * was not drawn. Where nothing changed, nothing is painted, and there is no
+ * contrast question to answer.
+ *
+ * The mask also makes the measurement itself sharper: the background is now
+ * sampled under the strokes rather than across the whole line box, so the
+ * leading above and below a line can no longer supply a comfortable pixel that
+ * a glyph never actually sat on.
+ *
+ * Text painted in EXACTLY its own background colour produces no change and is
+ * therefore skipped. That is deliberate: invisible-on-solid is the one contrast
+ * case static analysis handles perfectly, so axe and IBM already own it. This
+ * check exists for backdrops they cannot resolve.
+ */
 async function measureAgainst(input: {
-  dataUrl: string;
+  hiddenUrl: string;
+  shownUrl: string;
   candidates: Candidate[];
   viewportWidth: number;
-  step: number;
+  minDelta: number;
+  maxCoverage: number;
+  maxSamples: number;
 }): Promise<Measured[]> {
-  const { dataUrl, candidates, viewportWidth, step } = input;
+  const { hiddenUrl, shownUrl, candidates, viewportWidth, minDelta, maxCoverage, maxSamples } =
+    input;
 
-  const img = new Image();
-  img.src = dataUrl;
-  await img.decode();
+  const load = async (src: string): Promise<HTMLImageElement> => {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    return img;
+  };
+  const [hidden, shown] = await Promise.all([load(hiddenUrl), load(shownUrl)]);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  // One small scratch canvas, resized per rect, instead of two full-page
+  // canvases. A 1280x14600 page would otherwise cost ~150MB of bitmap in a
+  // worker budgeted at ~300MB.
+  const scratch = document.createElement('canvas');
+  const ctx = scratch.getContext('2d', { willReadFrequently: true });
   if (!ctx) return [];
-  ctx.drawImage(img, 0, 0);
 
   // The screenshot may be captured at a different device scale than CSS pixels.
-  const scale = img.naturalWidth / viewportWidth;
+  const scale = hidden.naturalWidth / viewportWidth;
 
   const channel = (v: number): number => {
     const c = v / 255;
@@ -331,35 +488,84 @@ async function measureAgainst(input: {
     for (const rect of candidate.rects) {
       const x0 = Math.max(0, Math.floor(rect.x * scale));
       const y0 = Math.max(0, Math.floor(rect.y * scale));
-      const w = Math.min(canvas.width - x0, Math.ceil(rect.w * scale));
-      const h = Math.min(canvas.height - y0, Math.ceil(rect.h * scale));
+      const w = Math.min(hidden.naturalWidth - x0, Math.ceil(rect.w * scale));
+      const h = Math.min(hidden.naturalHeight - y0, Math.ceil(rect.h * scale));
       if (w <= 0 || h <= 0) continue;
 
-      const data = ctx.getImageData(x0, y0, w, h).data;
-      const stride = Math.max(1, Math.round(step * scale));
+      scratch.width = w;
+      scratch.height = h;
+      ctx.drawImage(hidden, x0, y0, w, h, 0, 0, w, h);
+      const back = ctx.getImageData(0, 0, w, h).data;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(shown, x0, y0, w, h, 0, 0, w, h);
+      const front = ctx.getImageData(0, 0, w, h).data;
+
+      const stride = Math.max(1, Math.ceil(Math.sqrt((w * h) / maxSamples)));
+      const delta = (i: number): number =>
+        Math.abs((front[i] ?? 0) - (back[i] ?? 0)) +
+        Math.abs((front[i + 1] ?? 0) - (back[i + 1] ?? 0)) +
+        Math.abs((front[i + 2] ?? 0) - (back[i + 2] ?? 0));
+
+      // Pass 1: how strongly did hiding the glyphs change this box at all?
+      let peak = 0;
+      for (let y = 0; y < h; y += stride) {
+        for (let x = 0; x < w; x += stride) {
+          const d = delta((y * w + x) * 4);
+          if (d > peak) peak = d;
+        }
+      }
+      if (peak < minDelta) continue; // nothing is painted here
+
+      // Pass 2: measure at the glyph core only. Half of peak keeps the strokes
+      // and drops the antialiased edges, which blend toward the background and
+      // would drag every ratio toward 1:1.
+      const cut = Math.max(minDelta, peak * 0.5);
+      let visited = 0;
+      let hits = 0;
+      let rectWorst = Infinity;
+      let rectBg = '';
+      let rectFg = '';
 
       for (let y = 0; y < h; y += stride) {
         for (let x = 0; x < w; x += stride) {
           const i = (y * w + x) * 4;
-          const br = data[i] ?? 0;
-          const bg = data[i + 1] ?? 0;
-          const bb = data[i + 2] ?? 0;
+          visited += 1;
+          if (delta(i) < cut) continue;
+          hits += 1;
+
+          const br = back[i] ?? 0;
+          const bg = back[i + 1] ?? 0;
+          const bb = back[i + 2] ?? 0;
 
           // The text is semi-transparent, so what the eye sees is the text
           // composited ONTO this exact pixel. Compute that, then compare it
-          // with the pixel it sits on.
+          // with the pixel it sits on. Taken from the declared colour rather
+          // than from the screenshot, because a sampled glyph pixel carries
+          // the antialiasing with it.
           const fr = ta * tr + (1 - ta) * br;
           const fg2 = ta * tg + (1 - ta) * bg;
           const fb = ta * tb + (1 - ta) * bb;
 
           const ratio = contrast(luminance(fr, fg2, fb), luminance(br, bg, bb));
-          samples += 1;
-          if (ratio < worst) {
-            worst = ratio;
-            worstBg = `rgb(${br}, ${bg}, ${bb})`;
-            worstFg = `rgb(${Math.round(fr)}, ${Math.round(fg2)}, ${Math.round(fb)})`;
+          if (ratio < rectWorst) {
+            rectWorst = ratio;
+            rectBg = `rgb(${br}, ${bg}, ${bb})`;
+            rectFg = `rgb(${Math.round(fr)}, ${Math.round(fg2)}, ${Math.round(fb)})`;
           }
         }
+      }
+
+      // Glyphs cover part of a line box, never all of it. If nearly every pixel
+      // changed, the BACKGROUND moved between the two screenshots -- a canvas
+      // animation, a video, a JS-driven gradient -- and the mask means nothing.
+      // Say nothing rather than something unfounded.
+      if (hits === 0 || hits > visited * maxCoverage) continue;
+
+      samples += hits;
+      if (rectWorst < worst) {
+        worst = rectWorst;
+        worstBg = rectBg;
+        worstFg = rectFg;
       }
     }
 
@@ -393,20 +599,26 @@ export async function checkContrast(
 
   if (collected.candidates.length === 0) return [];
 
-  // Hide glyphs, capture the page as the compositor drew it, restore.
+  // Two captures of the same page, identical but for the glyphs. Animations are
+  // frozen for both, so the only thing that may differ is the text -- which is
+  // the whole basis of the mask that follows.
+  const shown = await page.screenshot({ fullPage: true, type: 'png', animations: 'disabled' });
   await page.evaluate(hideGlyphs);
-  let shot: Buffer;
+  let hiddenShot: Buffer;
   try {
-    shot = await page.screenshot({ fullPage: true, type: 'png' });
+    hiddenShot = await page.screenshot({ fullPage: true, type: 'png', animations: 'disabled' });
   } finally {
     await page.evaluate(showGlyphs);
   }
 
   const measured = await page.evaluate(measureAgainst, {
-    dataUrl: `data:image/png;base64,${shot.toString('base64')}`,
+    hiddenUrl: `data:image/png;base64,${hiddenShot.toString('base64')}`,
+    shownUrl: `data:image/png;base64,${shown.toString('base64')}`,
     candidates: collected.candidates,
     viewportWidth: collected.viewportWidth,
-    step: SAMPLE_STEP,
+    minDelta: GLYPH_MIN_DELTA,
+    maxCoverage: GLYPH_MAX_COVERAGE,
+    maxSamples: MAX_SAMPLES_PER_RECT,
   });
 
   const byIndex = new Map(collected.candidates.map((c) => [c.index, c]));
@@ -464,12 +676,12 @@ export async function checkContrast(
       severity: severityForShortfall(worstRatio, AA_NORMAL),
       title: `${failures.length} text element(s) fail contrast against their rendered background (worst ${worstRatio.toFixed(2)}:1 - ${reason})`,
       detail:
-        'These are the elements the other engines could not judge: the text is semi-transparent, or sits on a gradient, image or stack of translucent layers, so its real colour only exists once the page is composited. Measured here by hiding the glyphs, screenshotting the page, and sampling the actual pixels behind each line of text.' +
+        'These are the elements the other engines could not judge: the text is semi-transparent, or sits on a gradient, a photo, or a stack of translucent layers, so its real colour only exists once the page is composited. Note that the layer behind the text is often not one of its ancestors -- in the usual hero the photo and its scrim are absolutely-positioned siblings of the text container -- so the answer cannot be read off the markup at all. Measured here by hiding the glyphs, screenshotting the page, and sampling the actual pixels behind each line of text.' +
         (collected.capped
           ? ` Only the first ${MAX_ELEMENTS} eligible text runs on this page were measured, so there may be more below this list.`
           : ''),
       remedy:
-        'Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a gradient is only as good as its lightest region under light text.',
+        'Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a scrim over a photo is only as good as its lightest region under light text, and the same sentence can measure 16:1 where the photo is dark and 1.8:1 forty pixels to the right.',
       standards: ['WCAG SC 1.4.3 Contrast (Minimum)'],
       instances: failures,
       count: failures.length,
