@@ -355,6 +355,13 @@ function collectLayoutIssues(opts: {
     if (style.overflow !== 'hidden' && style.overflowY !== 'hidden') continue;
     if (el.clientHeight === 0) continue;
 
+    // line-clamp is a DELIBERATE truncation: a card teaser cut to N lines, with
+    // the full text one click away. The clip is the design, not a defect, and
+    // flagging it would condemn every summary card on the web.
+    const clamp =
+      style.getPropertyValue('-webkit-line-clamp') || style.getPropertyValue('line-clamp');
+    if (clamp && clamp !== 'none' && clamp.trim() !== '') continue;
+
     const box = el.getBoundingClientRect();
     const textBottom = lowestTextBottom(el);
     if (textBottom === -Infinity) continue; // nothing but decoration in here

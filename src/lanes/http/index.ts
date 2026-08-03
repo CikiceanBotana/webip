@@ -21,7 +21,7 @@ import type { Finding, LaneResult, PageTarget, RunConfig, ToolName } from '../..
 
 import { checkLinks } from './links.js';
 import { checkHtmlValidate, checkNuValidator, hasJava } from './markup.js';
-import { checkSemantics } from './semantics.js';
+import { checkSemantics, extractFormActions } from './semantics.js';
 
 export interface HttpLaneOptions {
   concurrency: number;
@@ -252,6 +252,9 @@ export async function runHttpLane(
             ...(opts.lycheeBin !== undefined ? { bin: opts.lycheeBin } : {}),
             timeoutMs: Math.max(opts.timeoutMs, 300_000),
             maxConcurrency: opts.concurrency,
+            // Form actions are submit targets, not links; GETting them proves
+            // nothing and a POST-only endpoint answers 400.
+            ignoreUrls: [...new Set(live.flatMap(({ page }) => extractFormActions(page)))],
           },
         ).catch((err: unknown) => {
           errors.push(`lychee: ${err instanceof Error ? err.message : String(err)}`);

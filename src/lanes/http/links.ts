@@ -122,8 +122,17 @@ export interface LinkCheckOptions {
   timeoutMs: number;
   /** Parallel in-flight requests inside lychee itself. */
   maxConcurrency: number;
-  /** Skip link checking entirely for these hosts. */
+  /** Skip link checking entirely for these hosts. Regex, passed to lychee. */
   exclude?: string[];
+  /**
+   * Exact URLs to drop from the results.
+   *
+   * lychee extracts every URL-shaped attribute it finds, including form
+   * actions, and then GETs them. A POST-only endpoint answers 400 to that and
+   * looks identical to a dead link. The caller knows which URLs are form
+   * targets; this is where they are removed.
+   */
+  ignoreUrls?: readonly string[];
 }
 
 /**
@@ -168,6 +177,7 @@ export async function checkLinks(
 
   const findings: Finding[] = [];
   const knownUrls = new Set(targets.map((t) => t.url));
+  const ignored = new Set(opts.ignoreUrls ?? []);
   const fallbackSite = targets[0]?.site ?? '';
 
   const consume = (
@@ -180,6 +190,7 @@ export async function checkLinks(
       const site = originOf(source) || fallbackSite;
 
       for (const entry of entries) {
+        if (entry.url !== undefined && ignored.has(entry.url)) continue;
         const statusText = entry.status?.text ?? entry.status?.details ?? 'unknown error';
         const code = entry.status?.code;
         const isExternal = originOf(entry.url ?? '') !== site;

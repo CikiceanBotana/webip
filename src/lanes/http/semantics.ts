@@ -339,6 +339,22 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
   return findings;
 }
 
+/**
+ * Every form's submit target, resolved absolute.
+ *
+ * These are NOT links. A link checker issues GET; a form action expects POST,
+ * so a perfectly healthy endpoint answers 400 or 405 and gets reported as a
+ * broken link. Collected here so the link lane can exclude them.
+ */
+export function extractFormActions(page: FetchedPage): string[] {
+  const $ = cheerio.load(page.body);
+  const actions = $('form[action]')
+    .map((_, el) => resolveLink($(el).attr('action') ?? '', page.finalUrl))
+    .get()
+    .filter((href): href is string => href !== null);
+  return [...new Set(actions)];
+}
+
 /** Every on-page link, resolved absolute. Feeds the link checker. */
 export function extractLinks(page: FetchedPage): string[] {
   const $ = cheerio.load(page.body);
