@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "sogood.business is a HUB: its /sitemap.xml is a <sitemapindex> pointing at",
+    "357 tenant sites, some on their own apex domains (cuddletherapyaz.com,",
+    "guardrail.website, ttsphotography.co). Discovery expands it automatically.",
+    "",
+    "Pilot shape: the cheap fast lane sweeps every tenant's homepage, while the",
+    "expensive browser lane goes deep on the first 15 sites only. Both lanes run",
+    "concurrently, so the sweep costs almost nothing in wall-clock terms.",
+    "",
+    "Raise deepSites to widen the deep scan. At ~30s/page with Lighthouse on,",
+    "budget roughly deepSites * maxPagesPerSite * 30s / browserConcurrency."
+  ],
+
+  "seeds": ["https://sogood.business/"],
+
+  "maxSites": 400,
+  "deepSites": 15,
+  "maxPagesPerSite": 8,
+
+  "httpConcurrency": 8,
+  "browserConcurrency": 2,
+
+  "tools": {
+    "axe": true,
+    "ibm": true,
+    "lighthouse": true,
+    "layout": true,
+    "htmlValidate": true,
+    "nuValidator": true,
+    "lychee": true,
+    "semantics": true
+  },
+
+  "screenshots": true,
+  "pageTimeoutMs": 60000,
+  "cdpBasePort": 9400,
+  "outDir": "out"
+}

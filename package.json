@@ -8,6 +8,7 @@
     "node": "22.23.2"
   },
   "scripts": {
+    "scan": "tsx src/cli.ts",
     "smoke": "tsx scripts/smoke.ts",
     "versions": "tsx scripts/versions.ts",
     "typecheck": "tsc --noEmit",
