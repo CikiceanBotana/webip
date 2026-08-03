@@ -48,6 +48,21 @@ function severityFromLevel(level: string | undefined): Severity | null {
 }
 
 /**
+ * equal-access states measured contrast inside its prose message, e.g.
+ * "Text contrast of 1.02 with its background is less than the WCAG AA minimum
+ * requirements for text of size 16px and weight normal". Lifting the numbers
+ * into structured fields makes them sortable and comparable with axe's, which
+ * reports the same defect from a different engine.
+ */
+function contrastOf(message: string | undefined): { measured: string; expected: string } | undefined {
+  if (!message) return undefined;
+  const found = /contrast of ([\d.]+)/i.exec(message);
+  if (!found?.[1]) return undefined;
+  const large = /large text|18pt|14pt bold/i.test(message);
+  return { measured: `${found[1]}:1`, expected: large ? '3:1' : '4.5:1' };
+}
+
+/**
  * equal-access appends the entire finding as a URL-encoded fragment to its help
  * link, producing 800-character URLs. Keep the document, drop the fragment.
  */
@@ -94,10 +109,19 @@ export async function checkIbm(
         rule: result.ruleId ?? 'unknown',
         severity,
         title: result.message ?? result.ruleId ?? 'Accessibility issue',
-        location: {
-          ...(result.path?.dom ? { selector: result.path.dom } : {}),
-          ...(result.snippet ? { snippet: truncate(result.snippet, 160) } : {}),
-        },
+        // equal-access reports one result per element, so each finding carries
+        // exactly one occurrence. `collapse` later merges the occurrences of a
+        // rule on a page into one row WITHOUT discarding any of them, so the
+        // per-element message -- "Text contrast of 1.02", not "contrast is
+        // wrong" -- survives all the way into the report.
+        instances: [
+          {
+            ...(result.path?.dom ? { selector: result.path.dom } : {}),
+            ...(result.snippet ? { snippet: truncate(result.snippet, 160) } : {}),
+            ...(result.message ? { message: truncate(result.message, 220) } : {}),
+            ...(contrastOf(result.message) ?? {}),
+          },
+        ],
         ...(cleanHelpUrl(result.help) ? { helpUrl: cleanHelpUrl(result.help) as string } : {}),
         ...(evidence ? { evidence } : {}),
       }),

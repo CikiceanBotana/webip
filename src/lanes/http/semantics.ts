@@ -15,7 +15,55 @@ import * as cheerio from 'cheerio';
 import { makeFinding, truncate } from '../../core/finding.js';
 import { resolveLink } from '../../core/net.js';
 import type { FetchedPage } from '../../core/net.js';
-import type { Finding, PageTarget } from '../../core/types.js';
+import type { Finding, FindingInstance, PageTarget } from '../../core/types.js';
+
+/** Offending elements named per rule. See layout.ts for the same reasoning. */
+const MAX_INSTANCES_PER_RULE = 40;
+
+/**
+ * The shape of a parsed DOM node that this file needs.
+ *
+ * cheerio 1.x keeps its node types in `domhandler` and does not re-export them,
+ * so naming `Element` here would mean depending on a transitive package for a
+ * type alone. Describing the three fields actually used is structurally
+ * compatible with what cheerio hands back and couples to nothing.
+ */
+interface ElementLike {
+  type: string;
+  tagName?: string;
+  attribs?: Record<string, string>;
+  parent: ElementLike | null;
+}
+
+/**
+ * A short CSS-ish path for one element.
+ *
+ * cheerio has no selector generator, so this walks up a few levels building
+ * tag#id.class. It does not have to be a guaranteed-unique selector -- it has
+ * to let a developer find the element in their template, which "1 control has
+ * no label" does not.
+ */
+function pathOf(element: ElementLike): string {
+  const parts: string[] = [];
+  let node: ElementLike | null = element;
+  let depth = 0;
+
+  while (node && node.type === 'tag' && node.tagName && depth < 4) {
+    let part = node.tagName.toLowerCase();
+    const id = node.attribs?.['id'];
+    if (id) {
+      parts.unshift(`${part}#${id}`);
+      break;
+    }
+    const cls = (node.attribs?.['class'] ?? '').split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+    if (cls) part += `.${cls}`;
+    parts.unshift(part);
+    node = node.parent;
+    depth += 1;
+  }
+
+  return parts.join(' > ');
+}
 
 /** Rules that fire once per document. */
 export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[] {
@@ -25,7 +73,8 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
     severity: Parameters<typeof makeFinding>[0]['severity'],
     title: string,
     detail?: string,
-    location?: { selector?: string; snippet?: string },
+    instances?: FindingInstance[],
+    count?: number,
   ): void => {
     findings.push(
       makeFinding({
@@ -37,7 +86,8 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
         severity,
         title,
         ...(detail !== undefined ? { detail } : {}),
-        ...(location !== undefined ? { location } : {}),
+        ...(instances !== undefined ? { instances } : {}),
+        ...(count !== undefined ? { count } : {}),
       }),
     );
   };
@@ -75,6 +125,30 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
 
   const $ = cheerio.load(page.body);
 
+  /**
+   * Every element in a selection, pinpointed.
+   *
+   * This is the difference between "181 sites have an unlabelled form control"
+   * and a list a developer can walk. `attr` optionally lifts a URL (an image
+   * src, a link href) into the instance so the reader does not have to parse the
+   * snippet to find out which asset is at fault.
+   */
+  const instancesOf = (
+    selection: ReturnType<typeof $>,
+    attr?: 'src' | 'href',
+  ): FindingInstance[] =>
+    selection
+      .slice(0, MAX_INSTANCES_PER_RULE)
+      .map((_, element): FindingInstance => {
+        const value = attr ? $(element).attr(attr) : undefined;
+        return {
+          selector: pathOf(element),
+          snippet: truncate($.html(element) ?? '', 160),
+          ...(value ? { target: resolveLink(value, page.finalUrl) ?? value } : {}),
+        };
+      })
+      .get();
+
   // --- document head ---------------------------------------------------------
   const lang = $('html').attr('lang')?.trim();
   if (!lang) {
@@ -83,32 +157,40 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'serious',
       'Missing lang attribute on <html>',
       'Screen readers cannot determine the document language, so they may read content with the wrong pronunciation rules.',
-      { selector: 'html' },
+      [{ selector: 'html', snippet: truncate($.html($('html').first()) ?? '', 120) }],
     );
   }
 
   const titles = $('head title');
   const titleText = titles.first().text().trim();
   if (titles.length === 0 || titleText === '') {
-    add('title-missing', 'serious', 'Missing or empty <title>', undefined, { selector: 'head > title' });
+    add('title-missing', 'serious', 'Missing or empty <title>', undefined, [
+      { selector: 'head > title', message: 'No non-empty <title> element in <head>' },
+    ]);
   } else if (titles.length > 1) {
-    add('title-duplicate', 'moderate', `${titles.length} <title> elements in <head>`, undefined, {
-      selector: 'head > title',
-    });
+    add(
+      'title-duplicate',
+      'moderate',
+      `${titles.length} <title> elements in <head>`,
+      undefined,
+      instancesOf(titles),
+      titles.length,
+    );
   } else if (titleText.length > 65) {
     add(
       'title-length',
       'minor',
       `<title> is ${titleText.length} characters; search results truncate near 60`,
-      truncate(titleText),
+      undefined,
+      [{ selector: 'head > title', snippet: truncate(titleText, 160), measured: `${titleText.length} characters`, expected: 'about 60 characters' }],
     );
   }
 
   const description = $('head meta[name="description"]').attr('content')?.trim();
   if (!description) {
-    add('meta-description', 'minor', 'Missing meta description', undefined, {
-      selector: 'head > meta[name=description]',
-    });
+    add('meta-description', 'minor', 'Missing meta description', undefined, [
+      { selector: 'head > meta[name=description]', message: 'Element absent from <head>' },
+    ]);
   }
 
   if ($('head meta[name="viewport"]').length === 0) {
@@ -117,14 +199,14 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'serious',
       'Missing viewport meta tag',
       'Without it mobile browsers render at desktop width and zoom out, making text unreadable.',
-      { selector: 'head > meta[name=viewport]' },
+      [{ selector: 'head > meta[name=viewport]', message: 'Element absent from <head>' }],
     );
   }
 
   if ($('head link[rel="canonical"]').length === 0) {
-    add('canonical-missing', 'minor', 'Missing rel=canonical link', undefined, {
-      selector: 'head > link[rel=canonical]',
-    });
+    add('canonical-missing', 'minor', 'Missing rel=canonical link', undefined, [
+      { selector: 'head > link[rel=canonical]', message: 'Element absent from <head>' },
+    ]);
   }
 
   if ($('head meta[charset], head meta[http-equiv="Content-Type"]').length === 0) {
@@ -140,7 +222,9 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'h1-multiple',
       'minor',
       `Page has ${h1s.length} <h1> elements`,
-      'Multiple top-level headings make the document outline ambiguous.',
+      undefined,
+      instancesOf(h1s),
+      h1s.length,
     );
   }
 
@@ -156,7 +240,8 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
         'heading-skip',
         'minor',
         `Heading level jumps from h${previous} to h${level}`,
-        'Skipped levels break the outline for assistive technology.',
+        undefined,
+        [{ selector: `h${level}`, message: `Follows an h${previous}, skipping ${level - previous - 1} level(s)`, measured: `h${previous} then h${level}`, expected: `h${previous} then h${previous + 1}` }],
       );
       break; // one report per page is enough
     }
@@ -167,13 +252,13 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
   const imgs = $('img');
   const missingAlt = imgs.filter((_, el) => $(el).attr('alt') === undefined);
   if (missingAlt.length > 0) {
-    const first = missingAlt.first();
     add(
       'img-alt',
       'serious',
       `${missingAlt.length} of ${imgs.length} <img> elements have no alt attribute`,
-      'Decorative images need alt="" ; meaningful images need a description.',
-      { selector: 'img', snippet: truncate($.html(first) ?? '') },
+      undefined,
+      instancesOf(missingAlt, 'src'),
+      missingAlt.length,
     );
   }
 
@@ -183,7 +268,9 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'img-loading',
       'info',
       `None of the ${imgs.length} images use loading="lazy"`,
-      'Off-screen images are downloaded eagerly, costing bandwidth on first paint.',
+      undefined,
+      instancesOf(lazyable, 'src'),
+      lazyable.length,
     );
   }
 
@@ -202,8 +289,9 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'link-name',
       'serious',
       `${empty.length} link(s) have no accessible name`,
-      'A link with no text, aria-label or titled image is announced as just "link".',
-      { selector: 'a[href]', snippet: truncate($.html(empty.first()) ?? '') },
+      undefined,
+      instancesOf(empty, 'href'),
+      empty.length,
     );
   }
 
@@ -219,8 +307,9 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'target-blank-noopener',
       'moderate',
       `${unsafeBlank.length} link(s) use target="_blank" without rel="noopener"`,
-      'The opened document can navigate the opener via window.opener.',
-      { selector: 'a[target=_blank]', snippet: truncate($.html(unsafeBlank.first()) ?? '') },
+      undefined,
+      instancesOf(unsafeBlank, 'href'),
+      unsafeBlank.length,
     );
   }
 
@@ -242,7 +331,8 @@ export function checkSemantics(target: PageTarget, page: FetchedPage): Finding[]
       'serious',
       `${unlabelled.length} form control(s) have no associated label`,
       undefined,
-      { selector: 'input, select, textarea', snippet: truncate($.html(unlabelled.first()) ?? '') },
+      instancesOf(unlabelled),
+      unlabelled.length,
     );
   }
 

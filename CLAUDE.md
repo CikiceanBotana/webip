@@ -45,9 +45,15 @@ discard the run, do not report from it.
 - **axe-core** — default import; 105 rules; `axe.source` is injectable via `addScriptTag`.
 - **lighthouse** — default export fn. Drive via
   `chromium.launch({args:['--remote-debugging-port=N']})` then `lighthouse(url, {port: N})`.
-  **Leaks User Timing marks between runs in one process** → later runs die with
-  *"the 'start lh:driver:navigate' performance mark has not been set"*. Call
-  `performance.clearMarks()/clearMeasures()` before each run.
+  **Must be serialised PROCESS-WIDE, not per worker.** `performance` is one global object
+  per Node process, so two workers running Lighthouse concurrently erase each other's User
+  Timing marks and the loser dies with *"the 'start lh:driver:navigate' performance mark has
+  not been set"*. On the 120-page pilot with 2 workers this was **56 failures — 100% of all
+  scan errors in the run**. `performance.clearMarks()` alone does NOT fix it (it is part of
+  the cause) and the retry cannot help, because the competing worker is still running. The
+  lock is in `src/lanes/browser/lighthouse.ts`.
+  Also read `audit.details.items` — that is where the specifics live (which image, how many
+  bytes, which node). Reading only the score throws away everything actionable.
 - **vnu-jar** — `String(require('vnu-jar'))` → jar path.
   `java -jar <jar> --format json --stdout --exit-zero-always -` (`-` = stdin; a directory also works).
 - **lychee** — `./bin/lychee --no-progress --format json ...`. Prints a human `Hint:` line
@@ -74,6 +80,46 @@ src/orchestrator.ts  runs BOTH LANES CONCURRENTLY; contains no checking logic
 **The invariant that matters:** every tool normalises to `Finding[]` behind an adapter.
 The orchestrator, deduper and reporters never learn a tool's native output. Adding a checker
 is one new file. Removing one is a `tools.*` config flag.
+
+### The specificity rule — a count is not a defect report
+
+**Adapters MUST emit every occurrence, never just the first.** Each one becomes a
+`FindingInstance` carrying `selector / snippet / line / column / target / measured / expected`.
+`collapse()` merges instance lists; it never keeps one and drops the rest.
+
+This is not stylistic. Before it was enforced, one pilot produced:
+- 242 broken links → 62 rows naming 62 URLs. **180 dead URLs existed only as a number.**
+- 697 contrast failures → 120 rows. axe had measured every ratio and colour pair; the
+  adapter kept the first and discarded 577.
+- 24,649 real occurrences → 5,372 rows. **78% of findings had no "where".**
+
+`count` is always the TRUE total; `instances` is capped at 50 and sets `instancesTruncated`
+when it drops any (never set when `instances` is empty — a page-level rule legitimately has
+nothing below the URL to point at).
+
+### findings.json layout (`schema: "webip/2"`)
+
+Ordered conclusion → evidence: `integrity` → `stats` → `issues` → `findings` → `coverage`.
+- **`issues`** — each defect ONCE, with `whatIsWrong`, `howToFix`, `standards`, `scope`
+  (platform / widespread / tenant) and pinpointed `examples`. This is the fix plan.
+- **`coverage`** — per page, per tool: ok / error / skipped. Kills the silent-corruption
+  ambiguity below: a page with no findings is now provably clean, not merely unexamined.
+- **`integrity.ok: false`** — a tool failed on *everything* it attempted, so its silence means
+  "broken", not "clean". **Do not report from that run.** `printSummary` shouts it.
+
+### Durability
+
+`RunStream` appends every finding to `out/<dir>/stream.jsonl` as it is produced (one JSON
+value per line, so a half-written final line costs one record). `npm run analyze` accepts
+that `.jsonl` directly, so a run killed at hour eleven is still worth something.
+The consolidated JSON is still the deliverable; the log is a write-ahead insurance policy.
+
+### Rules the catalog owns
+
+`src/core/catalog.ts` maps ANY rule → `{category, whatIsWrong, howToFix, standards}`.
+Rules we invented (semantics/layout/fetch/lychee) are described exhaustively there because
+no upstream docs exist. axe is handled by **decoding its own tags** (`wcag143` → SC 1.4.3),
+which covers all 105 of its rules without a hand-written table.
 
 Two batching rules that are load-bearing:
 - The fast lane takes a **flat page list**, not a site. The JVM and lychee amortise over the

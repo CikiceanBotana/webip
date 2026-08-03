@@ -18,8 +18,16 @@
 
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
+import { CoverageTracker } from '../../core/coverage.js';
 import { captureEvidence } from '../../core/evidence.js';
-import type { Finding, LaneResult, PageTarget, RunConfig } from '../../core/types.js';
+import type {
+  Finding,
+  LaneResult,
+  PageCoverage,
+  PageTarget,
+  RunConfig,
+  ToolName,
+} from '../../core/types.js';
 
 import { checkAxe } from './axe.js';
 import { checkIbm, closeIbm } from './ibm.js';
@@ -37,6 +45,12 @@ export interface BrowserLaneOptions {
   viewport?: { width: number; height: number };
   /** Called as each page finishes, for live progress. */
   onPage?: (url: string, findingCount: number, index: number, total: number) => void;
+  /**
+   * Called with each page's findings the moment they exist, so a caller can
+   * persist them incrementally instead of waiting for the whole lane. A long
+   * browser run is exactly the job that gets killed before it returns.
+   */
+  onFindings?: (findings: readonly Finding[], coverage: PageCoverage) => void;
 }
 
 interface Worker {
@@ -62,14 +76,52 @@ async function inspectPage(
   worker: Worker,
   opts: BrowserLaneOptions,
   errors: string[],
+  coverage: CoverageTracker,
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   let context: BrowserContext | undefined;
   let page: Page | undefined;
   let evidence: string | undefined;
 
-  const note = (stage: string, err: unknown): void => {
-    errors.push(`${stage} ${target.url}: ${err instanceof Error ? err.message : String(err)}`);
+  coverage.page(target.url, target.site);
+
+  const note = (stage: ToolName, err: unknown): void => {
+    const reason = err instanceof Error ? err.message : String(err);
+    errors.push(`${stage} ${target.url}: ${reason}`);
+    coverage.record(target.url, target.site, stage, 'error', { reason });
+  };
+
+  /** Runs one check and records whether it actually ran. */
+  const run = async (
+    tool: ToolName,
+    enabled: boolean,
+    check: () => Promise<Finding[]>,
+  ): Promise<void> => {
+    if (!enabled) {
+      coverage.record(target.url, target.site, tool, 'skipped', { reason: 'disabled' });
+      return;
+    }
+    try {
+      const produced = await check();
+      findings.push(...produced);
+
+      // A tool can fail without throwing: Lighthouse returns a report whose
+      // only content is "I could not analyse this page". Those are emitted with
+      // category 'scan', and treating them as a successful check would put the
+      // page back in the ambiguous state coverage exists to remove -- assessed
+      // and clean, versus never assessed at all.
+      const selfReported = produced.find((finding) => finding.category === 'scan');
+      if (selfReported) {
+        coverage.record(target.url, target.site, tool, 'error', {
+          reason: selfReported.title,
+        });
+        return;
+      }
+
+      coverage.record(target.url, target.site, tool, 'ok', { findings: produced.length });
+    } catch (err) {
+      note(tool, err);
+    }
   };
 
   try {
@@ -93,33 +145,29 @@ async function inspectPage(
       if (captured) evidence = captured;
     }
 
-    if (opts.tools.axe) {
-      try {
-        findings.push(...(await checkAxe(target, page, evidence)));
-      } catch (err) {
-        note('axe', err);
-      }
-    }
-
-    if (opts.tools.ibm) {
-      try {
-        findings.push(...(await checkIbm(target, page, evidence)));
-      } catch (err) {
-        note('ibm', err);
-      }
-    }
-
+    const live = page;
+    await run('axe-core', opts.tools.axe, () => checkAxe(target, live, evidence));
+    await run('ibm-equal-access', opts.tools.ibm, () => checkIbm(target, live, evidence));
     // Layout last of the in-page checks: it resizes the viewport for the
     // mobile pass, which would invalidate anything measured after it.
-    if (opts.tools.layout) {
-      try {
-        findings.push(...(await checkLayout(target, page, { mobilePass: true }, evidence)));
-      } catch (err) {
-        note('layout', err);
+    await run('layout', opts.tools.layout, () =>
+      checkLayout(target, live, { mobilePass: true }, evidence),
+    );
+  } catch (err) {
+    // Navigation failed, so nothing in-page ever got a chance. Record that
+    // explicitly: a page with no findings because it never loaded is not clean.
+    const reason = err instanceof Error ? err.message : String(err);
+    errors.push(`navigate ${target.url}: ${reason}`);
+    coverage.record(target.url, target.site, 'fetch', 'error', { reason });
+    for (const [tool, enabled] of [
+      ['axe-core', opts.tools.axe],
+      ['ibm-equal-access', opts.tools.ibm],
+      ['layout', opts.tools.layout],
+    ] as Array<[ToolName, boolean]>) {
+      if (enabled) {
+        coverage.record(target.url, target.site, tool, 'error', { reason: 'navigation failed' });
       }
     }
-  } catch (err) {
-    note('navigate', err);
   } finally {
     try {
       await context?.close();
@@ -130,19 +178,9 @@ async function inspectPage(
 
   // Lighthouse drives the browser itself, so it runs only once our own context
   // is closed and the browser is otherwise idle.
-  if (opts.tools.lighthouse) {
-    try {
-      findings.push(
-        ...(await checkLighthouse(
-          target,
-          { port: worker.cdpPort, timeoutMs: opts.timeoutMs },
-          evidence,
-        )),
-      );
-    } catch (err) {
-      note('lighthouse', err);
-    }
-  }
+  await run('lighthouse', opts.tools.lighthouse, () =>
+    checkLighthouse(target, { port: worker.cdpPort, timeoutMs: opts.timeoutMs }, evidence),
+  );
 
   return findings;
 }
@@ -160,9 +198,10 @@ export async function runBrowserLane(
   const started = Date.now();
   const findings: Finding[] = [];
   const errors: string[] = [];
+  const coverage = new CoverageTracker();
 
   if (pages.length === 0) {
-    return { findings, errors, durationMs: 0 };
+    return { findings, errors, coverage: [], durationMs: 0 };
   }
 
   const width = Math.max(1, Math.min(opts.concurrency, pages.length));
@@ -181,7 +220,7 @@ export async function runBrowserLane(
 
     if (workers.length === 0) {
       errors.push('No Chromium workers could be launched; browser lane skipped.');
-      return { findings, errors, durationMs: Date.now() - started };
+      return { findings, errors, coverage: coverage.list(), durationMs: Date.now() - started };
     }
 
     let cursor = 0;
@@ -194,10 +233,11 @@ export async function runBrowserLane(
           if (index >= pages.length) return;
           const target = pages[index] as PageTarget;
 
-          const pageFindings = await inspectPage(target, worker, opts, errors);
+          const pageFindings = await inspectPage(target, worker, opts, errors, coverage);
           findings.push(...pageFindings);
 
           completed += 1;
+          opts.onFindings?.(pageFindings, coverage.page(target.url, target.site));
           opts.onPage?.(target.url, pageFindings.length, completed, pages.length);
         }
       }),
@@ -215,5 +255,5 @@ export async function runBrowserLane(
     );
   }
 
-  return { findings, errors, durationMs: Date.now() - started };
+  return { findings, errors, coverage: coverage.list(), durationMs: Date.now() - started };
 }

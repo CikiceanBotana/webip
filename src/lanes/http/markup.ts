@@ -68,11 +68,14 @@ export async function checkHtmlValidate(
           rule: message.ruleId,
           severity: severityFromHtmlValidate(message.severity),
           title: message.message,
-          location: {
-            line: message.line,
-            column: message.column,
-            ...(message.selector ? { selector: message.selector } : {}),
-          },
+          instances: [
+            {
+              line: message.line,
+              column: message.column,
+              ...(message.selector ? { selector: message.selector } : {}),
+              message: message.message,
+            },
+          ],
           helpUrl: `https://html-validate.org/rules/${message.ruleId}.html`,
         }),
       );
@@ -221,11 +224,14 @@ export async function checkNuValidator(
           rule: ruleIdFromNuMessage(message.message),
           severity: severityFromNu(message),
           title: message.message,
-          location: {
-            ...(message.lastLine !== undefined ? { line: message.lastLine } : {}),
-            ...(message.firstColumn !== undefined ? { column: message.firstColumn } : {}),
-            ...(message.extract ? { snippet: truncate(message.extract, 120) } : {}),
-          },
+          instances: [
+            {
+              ...(message.lastLine !== undefined ? { line: message.lastLine } : {}),
+              ...(message.firstColumn !== undefined ? { column: message.firstColumn } : {}),
+              ...(message.extract ? { snippet: truncate(message.extract, 120) } : {}),
+              message: message.message,
+            },
+          ],
         }),
       );
     }

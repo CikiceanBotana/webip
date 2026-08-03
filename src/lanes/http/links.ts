@@ -198,9 +198,19 @@ export async function checkLinks(
                 : isExternal
                   ? 'minor'
                   : severityForStatus(code, statusText),
-            title: `${isExternal ? 'External' : 'Internal'} link ${code ? `returns ${code}` : 'fails'}: ${entry.url ?? '(unknown)'}`,
+            // The URL lives in the instance, not the title. A page with 20
+            // dead links collapses to ONE row, and a title naming just one of
+            // them would hide the other 19 behind a count.
+            title: `${isExternal ? 'External' : 'Internal'} link ${code ? `returns ${code}` : 'fails'}`,
             detail: statusText,
-            location: { snippet: entry.url ?? '' },
+            instances: [
+              {
+                target: entry.url ?? '(unknown)',
+                message: statusText,
+                measured: code !== undefined ? `HTTP ${code}` : statusText,
+                expected: 'HTTP 200',
+              },
+            ],
           }),
         );
       }

@@ -12,14 +12,24 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { assessIntegrity, summariseByTool } from './coverage.js';
 import {
+  countByCategory,
   countBySeverity,
   countByTool,
+  countOccurrences,
   groupBySite,
-  severityRank,
   sortFindings,
 } from './finding.js';
-import { SEVERITIES, type Finding, type RunReport, type Severity } from './types.js';
+import { rollupIssues } from './issues.js';
+import {
+  SEVERITIES,
+  type Finding,
+  type IssueScope,
+  type PageCoverage,
+  type RunReport,
+  type Severity,
+} from './types.js';
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: '#b91c1c',
@@ -27,6 +37,13 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   moderate: '#a16207',
   minor: '#0369a1',
   info: '#57534e',
+};
+
+/** Scope answers "fix once, or fix per tenant?". */
+const SCOPE_COLOR: Record<IssueScope, string> = {
+  platform: '#6d28d9',
+  widespread: '#0f766e',
+  tenant: '#57534e',
 };
 
 function escapeHtml(text: string): string {
@@ -55,38 +72,45 @@ export function printSummary(report: RunReport, limit = 25): void {
     if (count > 0) console.log(`    ${severity.padEnd(10)} ${String(count).padStart(6)}`);
   }
 
+  console.log('\n  BY CATEGORY');
+  for (const [category, count] of Object.entries(stats.byCategory).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${category.padEnd(16)} ${String(count).padStart(6)}`);
+  }
+
   console.log('\n  BY TOOL');
   for (const [tool, count] of Object.entries(stats.byTool).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${tool.padEnd(20)} ${String(count).padStart(6)}`);
   }
 
-  // Which issues affect the most pages across the whole network? On a templated
-  // platform like this one, a rule hitting 300 pages is one bug in one template.
-  const byRule = new Map<string, { count: number; severity: Severity; title: string; sites: Set<string> }>();
-  for (const f of report.findings) {
-    const key = `${f.tool}/${f.rule}`;
-    const entry = byRule.get(key);
-    if (entry) {
-      entry.count += f.count;
-      entry.sites.add(f.site);
-      if (severityRank(f.severity) < severityRank(entry.severity)) entry.severity = f.severity;
-    } else {
-      byRule.set(key, { count: f.count, severity: f.severity, title: f.title, sites: new Set([f.site]) });
-    }
+  // The rollup already ranked every defect by severity and reach; printing it
+  // rather than recomputing it keeps the console and the JSON in agreement.
+  console.log('\n  TOP ISSUES');
+  for (const issue of report.issues.slice(0, limit)) {
+    console.log(
+      `    [${issue.severity.padEnd(8)}] ${issue.scope.padEnd(10)} ${issue.key.slice(0, 40).padEnd(40)} ` +
+        `${String(issue.sitesAffected).padStart(4)} site(s)  ${String(issue.occurrences).padStart(6)}×`,
+    );
   }
 
-  console.log('\n  TOP ISSUES (by pages affected)');
-  const ranked = [...byRule.entries()]
-    .sort(
-      (a, b) =>
-        severityRank(a[1].severity) - severityRank(b[1].severity) || b[1].count - a[1].count,
-    )
-    .slice(0, limit);
-
-  for (const [rule, entry] of ranked) {
+  // Coverage is printed even when it is boring, because the one run where it is
+  // not boring is the run that would otherwise be reported as a clean site.
+  console.log('\n  COVERAGE (pages where each tool completed)');
+  for (const [tool, cov] of Object.entries(report.coverage.byTool).sort(
+    (a, b) => b[1].ran - a[1].ran,
+  )) {
+    const attempted = cov.ran + cov.errored;
+    const rate = attempted > 0 ? Math.round((cov.ran / attempted) * 100) : 100;
     console.log(
-      `    [${entry.severity.padEnd(8)}] ${rule.slice(0, 44).padEnd(44)} ${String(entry.count).padStart(5)}×  ${entry.sites.size} site(s)`,
+      `    ${tool.padEnd(20)} ${String(cov.ran).padStart(5)} ok · ${String(cov.errored).padStart(4)} failed · ` +
+        `${String(cov.skipped).padStart(4)} skipped  (${rate}% completed)`,
     );
+  }
+
+  if (!report.integrity.ok || report.integrity.warnings.length > 0) {
+    console.log(
+      `\n  ${report.integrity.ok ? 'INCOMPLETE RUN' : 'RUN NOT TRUSTWORTHY -- DO NOT REPORT FROM THIS DATA'}`,
+    );
+    for (const warning of report.integrity.warnings) console.log(`    ${warning}`);
   }
 
   if (report.errors.length > 0) {
@@ -97,18 +121,53 @@ export function printSummary(report: RunReport, limit = 25): void {
   console.log(`\n${line}\n`);
 }
 
+/** How many occurrences to list inline per finding in the HTML. */
+const INSTANCES_SHOWN = 10;
+
+/** One occurrence: where it is, what was measured, what was expected. */
+function renderInstance(instance: Finding['instances'][number]): string {
+  const where =
+    instance.selector ??
+    instance.target ??
+    (instance.line !== undefined ? `line ${instance.line}` : '');
+  const position =
+    instance.selector !== undefined && instance.line !== undefined ? `:${instance.line}` : '';
+  const measured =
+    instance.measured !== undefined
+      ? `<span class="meas">${escapeHtml(instance.measured)}${
+          instance.expected !== undefined ? ` → needs ${escapeHtml(instance.expected)}` : ''
+        }</span>`
+      : '';
+
+  return `
+        <li>
+          ${where ? `<code>${escapeHtml(String(where).slice(0, 150))}${position}</code>` : ''}
+          ${measured}
+          ${instance.message ? `<div class="imsg">${escapeHtml(instance.message)}</div>` : ''}
+          ${instance.snippet ? `<div class="isnip"><code>${escapeHtml(instance.snippet)}</code></div>` : ''}
+        </li>`;
+}
+
 function renderFindingRow(f: Finding): string {
-  const location = f.location?.selector ?? f.location?.snippet ?? '';
-  const line = f.location?.line !== undefined ? `:${f.location.line}` : '';
+  const shown = f.instances.slice(0, INSTANCES_SHOWN);
+  const hidden = f.count - shown.length;
+
   return `
     <tr>
       <td><span class="sev" style="background:${SEVERITY_COLOR[f.severity]}">${f.severity}</span></td>
-      <td class="tool">${escapeHtml(f.tool)}</td>
+      <td class="tool">${escapeHtml(f.tool)}<div class="cat">${escapeHtml(f.category)}</div></td>
       <td><code>${escapeHtml(f.rule)}</code>${f.count > 1 ? ` <span class="mult">×${f.count}</span>` : ''}</td>
       <td>
         <div class="title">${escapeHtml(f.title)}</div>
         ${f.detail ? `<div class="detail">${escapeHtml(f.detail)}</div>` : ''}
-        ${location ? `<div class="loc"><code>${escapeHtml(location.slice(0, 160))}${line}</code></div>` : ''}
+        ${f.remedy ? `<div class="fix"><strong>Fix:</strong> ${escapeHtml(f.remedy)}</div>` : ''}
+        ${
+          f.standards && f.standards.length > 0
+            ? `<div class="std">${f.standards.map((s) => `<span>${escapeHtml(s)}</span>`).join('')}</div>`
+            : ''
+        }
+        ${shown.length > 0 ? `<ul class="inst">${shown.map(renderInstance).join('')}</ul>` : ''}
+        ${hidden > 0 ? `<div class="more">+ ${hidden} more occurrence(s) on this page</div>` : ''}
         ${f.helpUrl ? `<a class="help" href="${escapeHtml(f.helpUrl)}" target="_blank" rel="noopener">docs</a>` : ''}
       </td>
       <td class="url"><a href="${escapeHtml(f.url)}" target="_blank" rel="noopener">${escapeHtml(
@@ -152,6 +211,72 @@ export function renderHtml(report: RunReport): string {
       <div class="tile-l">${s}</div>
     </div>`,
   ).join('');
+
+  // A run whose tools mostly failed must say so at the top, not bury it. Zero
+  // findings from a dead tool looks exactly like a clean site otherwise.
+  const banner =
+    report.integrity.ok && report.integrity.warnings.length === 0
+      ? ''
+      : `
+  <div class="banner ${report.integrity.ok ? 'warn' : 'bad'}">
+    <strong>${
+      report.integrity.ok
+        ? 'This run is incomplete.'
+        : 'This run cannot be trusted. Do not report from it.'
+    }</strong>
+    <ul>${report.integrity.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
+  </div>`;
+
+  const issueSections = report.issues
+    .map((issue) => {
+      const examples = issue.examples
+        .map((example) => {
+          const where = example.selector ?? example.target ?? '';
+          const measured =
+            example.measured !== undefined
+              ? `<span class="meas">${escapeHtml(example.measured)}${
+                  example.expected !== undefined ? ` → needs ${escapeHtml(example.expected)}` : ''
+                }</span>`
+              : '';
+          return `
+          <li>
+            <a href="${escapeHtml(example.url)}" target="_blank" rel="noopener">${escapeHtml(
+              example.url,
+            )}</a>
+            ${where ? `<div><code>${escapeHtml(String(where).slice(0, 150))}</code>${measured}</div>` : measured}
+          </li>`;
+        })
+        .join('');
+
+      return `
+  <details class="issue">
+    <summary>
+      <span class="sev" style="background:${SEVERITY_COLOR[issue.severity]}">${issue.severity}</span>
+      <span class="scope" style="background:${SCOPE_COLOR[issue.scope]}">${issue.scope}</span>
+      <span class="host">${escapeHtml(issue.title)}</span>
+      <span class="reach">${issue.sitesAffected} site(s) · ${issue.occurrences}×</span>
+    </summary>
+    <div class="issue-body">
+      <h4>What is wrong</h4>
+      <p>${escapeHtml(issue.whatIsWrong)}</p>
+      <h4>How to fix it</h4>
+      <p>${escapeHtml(issue.howToFix)}</p>
+      ${
+        issue.standards && issue.standards.length > 0
+          ? `<div class="std">${issue.standards.map((s) => `<span>${escapeHtml(s)}</span>`).join('')}</div>`
+          : ''
+      }
+      <h4>Where (${issue.pagesAffected} page(s) affected)</h4>
+      <ul class="ex">${examples}</ul>
+      <div class="detail">Rule <code>${escapeHtml(issue.key)}</code>${
+        issue.helpUrl
+          ? ` · <a href="${escapeHtml(issue.helpUrl)}" target="_blank" rel="noopener">docs</a>`
+          : ''
+      }</div>
+    </div>
+  </details>`;
+    })
+    .join('\n');
 
   return `<!doctype html>
 <html lang="en">
@@ -199,6 +324,35 @@ export function renderHtml(report: RunReport): string {
   .help { font-size:.75rem; }
   td.url { max-width:220px; word-break:break-all; }
   a { color:inherit; }
+  .cat { color:var(--muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; }
+  .fix { margin-top:.35rem; font-size:.8rem; }
+  .fix strong { font-weight:600; }
+  .std { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.35rem; }
+  .std span { font-size:.68rem; color:var(--muted); border:1px solid var(--line);
+              border-radius:999px; padding:.05rem .45rem; white-space:nowrap; }
+  ul.inst { margin:.45rem 0 0; padding-left:1.1rem; }
+  ul.inst li { margin-bottom:.35rem; }
+  .meas { font-size:.75rem; color:var(--muted); margin-left:.4rem; white-space:nowrap; }
+  .imsg { color:var(--muted); font-size:.78rem; margin-top:.1rem; }
+  .isnip { margin-top:.15rem; }
+  .more { color:var(--muted); font-size:.75rem; margin-top:.3rem; font-style:italic; }
+  .banner { border-radius:10px; padding:.85rem 1rem; margin-bottom:1.5rem;
+            border:1px solid; font-size:.875rem; }
+  .banner.bad { border-color:#b91c1c; background:rgba(185,28,28,.09); }
+  .banner.warn { border-color:#a16207; background:rgba(161,98,7,.09); }
+  .banner ul { margin:.4rem 0 0; padding-left:1.1rem; }
+  details.issue { border:1px solid var(--line); border-radius:10px; margin-bottom:.5rem;
+                  background:var(--card); }
+  .scope { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+           border-radius:999px; padding:.1rem .5rem; color:#fff; white-space:nowrap; }
+  .reach { margin-left:auto; color:var(--muted); font-size:.8rem; white-space:nowrap; }
+  .issue-body { padding:0 1rem 1rem; }
+  .issue-body h4 { margin:.7rem 0 .25rem; font-size:.7rem; text-transform:uppercase;
+                   letter-spacing:.05em; color:var(--muted); font-weight:600; }
+  .issue-body p { margin:0; }
+  .ex { list-style:none; margin:.3rem 0 0; padding:0; }
+  .ex li { padding:.35rem 0; border-top:1px solid var(--line); font-size:.82rem; }
+  h2 { font-size:1.1rem; margin:2rem 0 .75rem; letter-spacing:-.01em; }
 </style>
 </head>
 <body>
@@ -208,8 +362,13 @@ export function renderHtml(report: RunReport): string {
     ${escapeHtml(report.startedAt)} · ${report.stats.sitesScanned} sites ·
     ${report.stats.pagesFastLane} pages fast lane · ${report.stats.pagesBrowserLane} pages browser lane ·
     ${Math.round(report.durationMs / 1000)}s · ${report.stats.findingsTotal} findings
+    (${report.stats.occurrencesTotal} occurrences)
   </div>
+  ${banner}
   <div class="tiles">${tiles}</div>
+  <h2>Issues &mdash; ${report.issues.length} distinct defects</h2>
+  ${issueSections}
+  <h2>Findings by site</h2>
   ${siteSections}
 </div>
 </body>
@@ -234,32 +393,52 @@ export async function writeReport(
   return { json, html };
 }
 
-/** Assembles the final report object from raw findings. */
+/**
+ * Assembles the consolidated report: the single JSON that answers
+ * "what exactly is wrong with this website".
+ *
+ * Four layers, deliberately ordered from conclusion to raw evidence:
+ *   integrity  can this run be trusted at all
+ *   stats      the shape of the result
+ *   issues     each defect once, explained, with its fix and its reach
+ *   findings   every occurrence, pinned to a URL and a selector
+ *   coverage   proof of what actually ran, so silence is never ambiguous
+ */
 export function buildReport(input: {
   startedAt: Date;
   finishedAt: Date;
   config: RunReport['config'];
   findings: Finding[];
   errors: string[];
+  coverage: PageCoverage[];
   sitesScanned: number;
   pagesFastLane: number;
   pagesBrowserLane: number;
 }): RunReport {
   const findings = sortFindings(input.findings);
   return {
+    schema: 'webip/2',
     startedAt: input.startedAt.toISOString(),
     finishedAt: input.finishedAt.toISOString(),
     durationMs: input.finishedAt.getTime() - input.startedAt.getTime(),
     config: input.config,
+    integrity: assessIntegrity(input.coverage),
     stats: {
       sitesScanned: input.sitesScanned,
       pagesFastLane: input.pagesFastLane,
       pagesBrowserLane: input.pagesBrowserLane,
       findingsTotal: findings.length,
+      occurrencesTotal: countOccurrences(findings),
       bySeverity: countBySeverity(findings),
+      byCategory: countByCategory(findings),
       byTool: countByTool(findings),
     },
+    issues: rollupIssues(findings, input.sitesScanned),
     findings,
+    coverage: {
+      byTool: summariseByTool(input.coverage),
+      pages: input.coverage,
+    },
     errors: input.errors,
   };
 }

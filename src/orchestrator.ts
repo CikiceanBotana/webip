@@ -20,11 +20,20 @@
 import path from 'node:path';
 
 import { HTTP_BATCH_CONCURRENCY, HTTP_BATCH_SIZE } from './core/config.js';
+import { CoverageTracker } from './core/coverage.js';
 import { collapse } from './core/finding.js';
 import { labelOf } from './core/net.js';
 import { chunk, mapPool, mapPoolSettled } from './core/pool.js';
 import { buildReport } from './core/report.js';
-import type { Finding, PageTarget, RunConfig, RunReport, SiteTarget } from './core/types.js';
+import { RunStream } from './core/stream.js';
+import type {
+  Finding,
+  PageCoverage,
+  PageTarget,
+  RunConfig,
+  RunReport,
+  SiteTarget,
+} from './core/types.js';
 import { discoverSites, pagesForSite } from './discover/index.js';
 import { runBrowserLane } from './lanes/browser/index.js';
 import { runHttpLane } from './lanes/http/index.js';
@@ -108,7 +117,8 @@ async function runFastLane(
   plan: ScanPlan,
   config: RunConfig,
   hooks: ScanHooks,
-): Promise<{ findings: Finding[]; errors: string[] }> {
+  stream: RunStream | undefined,
+): Promise<{ findings: Finding[]; errors: string[]; coverage: PageCoverage[] }> {
   const batches = chunk(plan.fastPages, HTTP_BATCH_SIZE);
   hooks.onProgress?.(
     `fast lane: ${plan.fastPages.length} pages in ${batches.length} batch(es) of ${HTTP_BATCH_SIZE}`,
@@ -123,6 +133,11 @@ async function runFastLane(
       vnuHeapMb: 512,
     });
     done += 1;
+    // Persist as soon as the batch exists, so a crash costs one batch, not
+    // the whole sweep.
+    stream?.findings(result.findings);
+    stream?.coverage(result.coverage);
+    stream?.errors(result.errors);
     hooks.onProgress?.(
       `fast lane batch ${done}/${batches.length} · ${batch.length} pages · ${result.findings.length} findings · ${Math.round(result.durationMs / 1000)}s`,
     );
@@ -132,6 +147,7 @@ async function runFastLane(
   return {
     findings: results.flatMap((r) => r.findings),
     errors: results.flatMap((r) => r.errors),
+    coverage: results.flatMap((r) => r.coverage),
   };
 }
 
@@ -141,9 +157,10 @@ async function runDeepLane(
   config: RunConfig,
   rootDir: string,
   hooks: ScanHooks,
-): Promise<{ findings: Finding[]; errors: string[] }> {
+  stream: RunStream | undefined,
+): Promise<{ findings: Finding[]; errors: string[]; coverage: PageCoverage[] }> {
   if (plan.deepPages.length === 0 || !anyBrowserToolEnabled(config)) {
-    return { findings: [], errors: [] };
+    return { findings: [], errors: [], coverage: [] };
   }
 
   hooks.onProgress?.(
@@ -158,12 +175,17 @@ async function runDeepLane(
     screenshots: config.screenshots,
     outDir: path.resolve(rootDir, config.outDir),
     rootDir,
+    onFindings: (findings, coverage) => {
+      stream?.findings(findings);
+      stream?.coverage([coverage]);
+    },
     onPage: (url, count, index, total) => {
       hooks.onProgress?.(`browser ${index}/${total} · ${count} findings · ${url}`);
     },
   });
 
-  return { findings: result.findings, errors: result.errors };
+  stream?.errors(result.errors);
+  return { findings: result.findings, errors: result.errors, coverage: result.coverage };
 }
 
 function anyBrowserToolEnabled(config: RunConfig): boolean {
@@ -191,26 +213,45 @@ export async function runScan(
     `${plan.fastPages.length} pages fast lane, ${plan.deepPages.length} pages browser lane`,
   );
 
-  // Both lanes at once. Independent by construction: the browser lane loads its
-  // own pages in Chromium and shares no state with the HTTP lane.
-  const [fast, deep] = await Promise.all([
-    runFastLane(plan, config, hooks),
-    runDeepLane(plan, config, rootDir, hooks),
-  ]);
+  // A write-ahead log, opened before any work starts. Everything below also
+  // lands in the consolidated JSON; this exists so that a run killed at hour
+  // eleven is still worth something.
+  const outDir = path.resolve(rootDir, config.outDir);
+  const stream = await RunStream.open(outDir).catch(() => undefined);
+  stream?.write({ type: 'meta', startedAt: startedAt.toISOString(), config });
 
-  hooks.onPhase?.('report', 'collapsing findings');
+  try {
+    // Both lanes at once. Independent by construction: the browser lane loads
+    // its own pages in Chromium and shares no state with the HTTP lane.
+    const [fast, deep] = await Promise.all([
+      runFastLane(plan, config, hooks, stream),
+      runDeepLane(plan, config, rootDir, hooks, stream),
+    ]);
 
-  // Collapse repeats of the same rule on the same page into one counted row.
-  const findings = collapse([...fast.findings, ...deep.findings]);
+    hooks.onPhase?.('report', 'consolidating findings');
 
-  return buildReport({
-    startedAt,
-    finishedAt: new Date(),
-    config,
-    findings,
-    errors: [...fast.errors, ...deep.errors],
-    sitesScanned: plan.sites.length,
-    pagesFastLane: plan.fastPages.length,
-    pagesBrowserLane: plan.deepPages.length,
-  });
+    // Collapse repeats of the same rule on the same page into one row that
+    // keeps every occurrence.
+    const findings = collapse([...fast.findings, ...deep.findings]);
+
+    // One page is inspected by both lanes, so the two coverage records for it
+    // are merged rather than listed twice.
+    const coverage = new CoverageTracker();
+    coverage.merge(fast.coverage);
+    coverage.merge(deep.coverage);
+
+    return buildReport({
+      startedAt,
+      finishedAt: new Date(),
+      config,
+      findings,
+      errors: [...fast.errors, ...deep.errors],
+      coverage: coverage.list(),
+      sitesScanned: plan.sites.length,
+      pagesFastLane: plan.fastPages.length,
+      pagesBrowserLane: plan.deepPages.length,
+    });
+  } finally {
+    await stream?.close();
+  }
 }

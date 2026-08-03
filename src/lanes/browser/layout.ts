@@ -21,14 +21,31 @@ const MIN_TAP_TARGET = 24;
 /** Ignore sub-pixel and scrollbar-width noise when judging overflow. */
 const OVERFLOW_TOLERANCE = 2;
 
+/**
+ * How many offending elements to name per rule.
+ *
+ * The previous limits (5 overflow offenders, 3 clipped containers, and only the
+ * FIRST of however many undersized tap targets) were invisible in the output: a
+ * page with 40 tiny buttons reported one selector and the number 40. Naming
+ * them is the entire value of measuring them.
+ */
+const MAX_INSTANCES_PER_RULE = 40;
+
+export interface LayoutInstance {
+  selector?: string;
+  snippet?: string;
+  message?: string;
+  measured?: string;
+  expected?: string;
+}
+
 export interface LayoutIssue {
   rule: string;
   title: string;
   detail?: string;
-  selector?: string;
-  snippet?: string;
   count: number;
   severity: Severity;
+  instances: LayoutInstance[];
 }
 
 /**
@@ -40,8 +57,12 @@ export interface LayoutIssue {
  * for eval(): many of these sites ship a Content-Security-Policy, and a
  * script-src without 'unsafe-eval' would silently break every layout check.
  */
-function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }): LayoutIssue[] {
-  const { minTapTarget, tolerance } = opts;
+function collectLayoutIssues(opts: {
+  minTapTarget: number;
+  tolerance: number;
+  maxInstances: number;
+}): LayoutIssue[] {
+  const { minTapTarget, tolerance, maxInstances } = opts;
   const issues: LayoutIssue[] = [];
 
   const cssPath = (el: Element): string => {
@@ -92,12 +113,20 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
       detail:
         'Horizontal scrolling on a page that is not meant to scroll sideways is one of the most common mobile layout defects.',
       count: 1,
+      instances: [
+        {
+          selector: 'html',
+          measured: `${Math.round(docWidth)}px content`,
+          expected: `${viewportWidth}px viewport`,
+        },
+      ],
     });
 
     // ---- 2. Which elements actually stick out? -----------------------------
-    const offenders: Array<{ selector: string; snippet: string; right: number }> = [];
+    const offenders: LayoutInstance[] = [];
+    let offenderTotal = 0;
     const all = document.querySelectorAll<HTMLElement>('body *');
-    for (let i = 0; i < all.length && offenders.length < 5; i += 1) {
+    for (let i = 0; i < all.length; i += 1) {
       const el = all[i] as HTMLElement;
       if (!isVisible(el)) continue;
       const rect = el.getBoundingClientRect();
@@ -111,22 +140,26 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
             ? parent.getBoundingClientRect().right > viewportWidth + tolerance
             : false;
         if (!parentOverflows) {
-          offenders.push({
-            selector: cssPath(el),
-            snippet: outerHtml(el),
-            right: Math.round(rect.right),
-          });
+          offenderTotal += 1;
+          if (offenders.length < maxInstances) {
+            offenders.push({
+              selector: cssPath(el),
+              snippet: outerHtml(el),
+              message: `Extends ${Math.round(rect.right) - viewportWidth}px past the right edge`,
+              measured: `right edge at ${Math.round(rect.right)}px`,
+              expected: `at most ${viewportWidth}px`,
+            });
+          }
         }
       }
     }
-    for (const offender of offenders) {
+    if (offenderTotal > 0) {
       issues.push({
         rule: 'element-overflows-viewport',
         severity: 'moderate',
-        title: `Element extends ${offender.right - viewportWidth}px past the right edge of the viewport`,
-        selector: offender.selector,
-        snippet: offender.snippet,
-        count: 1,
+        title: `${offenderTotal} element(s) extend past the right edge of the viewport`,
+        count: offenderTotal,
+        instances: offenders,
       });
     }
   }
@@ -138,7 +171,10 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
     document.querySelectorAll<HTMLElement>(interactiveSelector),
   ).filter(isVisible);
 
-  const small: Array<{ selector: string; snippet: string; w: number; h: number }> = [];
+  const small: LayoutInstance[] = [];
+  let smallTotal = 0;
+  let smallestArea = Infinity;
+  let smallestLabel = '';
   for (const el of interactive) {
     const rect = el.getBoundingClientRect();
     // SC 2.5.8 exempts targets that sit inline within a sentence.
@@ -149,25 +185,31 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
       if (parentText.trim().length > ownText.trim().length + 20) continue;
     }
     if (rect.width < minTapTarget || rect.height < minTapTarget) {
-      small.push({
-        selector: cssPath(el),
-        snippet: outerHtml(el),
-        w: Math.round(rect.width),
-        h: Math.round(rect.height),
-      });
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      smallTotal += 1;
+      if (w * h < smallestArea) {
+        smallestArea = w * h;
+        smallestLabel = `${w}x${h}px`;
+      }
+      if (small.length < maxInstances) {
+        small.push({
+          selector: cssPath(el),
+          snippet: outerHtml(el),
+          message: `Tap target is ${w}x${h}px`,
+          measured: `${w}x${h}px`,
+          expected: `${minTapTarget}x${minTapTarget}px`,
+        });
+      }
     }
   }
-  if (small.length > 0) {
-    const first = small[0] as { selector: string; snippet: string; w: number; h: number };
+  if (smallTotal > 0) {
     issues.push({
       rule: 'tap-target-too-small',
       severity: 'moderate',
-      title: `${small.length} interactive element(s) smaller than ${minTapTarget}x${minTapTarget}px (smallest ${first.w}x${first.h}px)`,
-      detail:
-        'WCAG 2.2 SC 2.5.8 requires a minimum 24x24 CSS pixel target. Small controls are hard to hit accurately on touch screens and for users with motor impairments.',
-      selector: first.selector,
-      snippet: first.snippet,
-      count: small.length,
+      title: `${smallTotal} interactive element(s) smaller than ${minTapTarget}x${minTapTarget}px (smallest ${smallestLabel})`,
+      count: smallTotal,
+      instances: small,
     });
   }
 
@@ -175,8 +217,8 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
   // Two separately clickable things sitting on top of each other means one of
   // them is unreachable, or the wrong one receives the tap.
   const candidates = interactive.slice(0, 250);
-  const overlaps: Array<{ selector: string; snippet: string; other: string }> = [];
-  for (let i = 0; i < candidates.length && overlaps.length < 5; i += 1) {
+  const overlaps: LayoutInstance[] = [];
+  for (let i = 0; i < candidates.length && overlaps.length < maxInstances; i += 1) {
     const a = candidates[i] as HTMLElement;
     const ra = a.getBoundingClientRect();
     if (ra.width === 0 || ra.height === 0) continue;
@@ -195,28 +237,32 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
       const overlapArea = overlapW * overlapH;
       const smaller = Math.min(ra.width * ra.height, rb.width * rb.height);
       if (smaller > 0 && overlapArea / smaller > 0.4) {
-        overlaps.push({ selector: cssPath(a), snippet: outerHtml(a), other: cssPath(b) });
+        overlaps.push({
+          selector: cssPath(a),
+          snippet: outerHtml(a),
+          message: `Overlaps "${cssPath(b)}"; one of the two is likely unclickable`,
+          measured: `${Math.round((overlapArea / smaller) * 100)}% overlap`,
+          expected: 'no overlap between separate controls',
+        });
         break;
       }
     }
   }
   if (overlaps.length > 0) {
-    const first = overlaps[0] as { selector: string; snippet: string; other: string };
     issues.push({
       rule: 'interactive-overlap',
       severity: 'serious',
       title: `${overlaps.length} pair(s) of interactive elements overlap by more than 40%`,
-      detail: `"${first.selector}" overlaps "${first.other}". One of them is likely unclickable.`,
-      selector: first.selector,
-      snippet: first.snippet,
       count: overlaps.length,
+      instances: overlaps,
     });
   }
 
   // ---- 5. Content clipped by a fixed-height container ----------------------
-  const clipped: Array<{ selector: string; snippet: string }> = [];
+  const clipped: LayoutInstance[] = [];
+  let clippedTotal = 0;
   const blocks = document.querySelectorAll<HTMLElement>('body *');
-  for (let i = 0; i < blocks.length && clipped.length < 3; i += 1) {
+  for (let i = 0; i < blocks.length; i += 1) {
     const el = blocks[i] as HTMLElement;
     if (!isVisible(el)) continue;
     const style = window.getComputedStyle(el);
@@ -224,20 +270,26 @@ function collectLayoutIssues(opts: { minTapTarget: number; tolerance: number }):
     if (el.scrollHeight > el.clientHeight + 8 && el.clientHeight > 0) {
       const text = (el.textContent ?? '').trim();
       if (text.length > 20) {
-        clipped.push({ selector: cssPath(el), snippet: outerHtml(el) });
+        clippedTotal += 1;
+        if (clipped.length < maxInstances) {
+          clipped.push({
+            selector: cssPath(el),
+            snippet: outerHtml(el),
+            message: `${el.scrollHeight - el.clientHeight}px of content is hidden below the container`,
+            measured: `${el.scrollHeight}px of content in a ${el.clientHeight}px box`,
+            expected: 'container tall enough for its content',
+          });
+        }
       }
     }
   }
-  if (clipped.length > 0) {
-    const first = clipped[0] as { selector: string; snippet: string };
+  if (clippedTotal > 0) {
     issues.push({
       rule: 'content-clipped',
       severity: 'minor',
-      title: `${clipped.length} container(s) clip their own text content with overflow:hidden`,
-      detail: 'Text is taller than its container, so part of it is invisible and unreachable.',
-      selector: first.selector,
-      snippet: first.snippet,
-      count: clipped.length,
+      title: `${clippedTotal} container(s) clip their own text content with overflow:hidden`,
+      count: clippedTotal,
+      instances: clipped,
     });
   }
 
@@ -295,10 +347,10 @@ export async function checkLayout(
           severity: issue.severity,
           title: viewportLabel === 'mobile' ? `[mobile] ${issue.title}` : issue.title,
           ...(issue.detail !== undefined ? { detail: issue.detail } : {}),
-          location: {
-            ...(issue.selector ? { selector: issue.selector } : {}),
-            ...(issue.snippet ? { snippet: truncate(issue.snippet, 160) } : {}),
-          },
+          instances: issue.instances.map((instance) => ({
+            ...instance,
+            ...(instance.snippet ? { snippet: truncate(instance.snippet, 160) } : {}),
+          })),
           ...(evidence ? { evidence } : {}),
           count: issue.count,
         }),
@@ -311,6 +363,7 @@ export async function checkLayout(
   const desktop = await page.evaluate(collectLayoutIssues, {
     minTapTarget: MIN_TAP_TARGET,
     tolerance: OVERFLOW_TOLERANCE,
+    maxInstances: MAX_INSTANCES_PER_RULE,
   });
   toFindings(desktop, 'desktop');
 
@@ -324,6 +377,7 @@ export async function checkLayout(
       const issues = await page.evaluate(collectLayoutIssues, {
         minTapTarget: MIN_TAP_TARGET,
         tolerance: OVERFLOW_TOLERANCE,
+        maxInstances: MAX_INSTANCES_PER_RULE,
       });
       // Only overflow is re-reported; re-reporting tap targets would duplicate.
       toFindings(

@@ -13,10 +13,11 @@
  * Cheap enough to point at all 357 sites.
  */
 
+import { CoverageTracker, countFindingsByUrl } from '../../core/coverage.js';
 import { makeFinding } from '../../core/finding.js';
 import { fetchPage, type FetchedPage } from '../../core/net.js';
 import { mapPool } from '../../core/pool.js';
-import type { Finding, LaneResult, PageTarget, RunConfig } from '../../core/types.js';
+import type { Finding, LaneResult, PageTarget, RunConfig, ToolName } from '../../core/types.js';
 
 import { checkLinks } from './links.js';
 import { checkHtmlValidate, checkNuValidator } from './markup.js';
@@ -59,8 +60,14 @@ export async function checkTransport(
         rule: 'head-request-fails',
         severity: 'moderate',
         title: 'HEAD request fails while GET succeeds',
-        detail:
-          'Caches, monitors and link checkers issue HEAD before GET. If HEAD errors, they treat the URL as unreachable.',
+        instances: [
+          {
+            target: target.url,
+            message: 'HEAD threw while GET returned a body',
+            measured: 'HEAD errors',
+            expected: `HEAD ${getResult.status}`,
+          },
+        ],
       }),
     ];
   }
@@ -77,8 +84,14 @@ export async function checkTransport(
         rule: 'head-get-mismatch',
         severity: 'serious',
         title: `HEAD returns ${head.status} but GET returns ${getResult.status}`,
-        detail:
-          'The same URL reports two different states depending on method. CDN caches, uptime monitors, link checkers and social-preview crawlers issue HEAD first and will treat this page as missing.',
+        instances: [
+          {
+            target: target.url,
+            message: `HEAD ${head.status} vs GET ${getResult.status}`,
+            measured: `HEAD ${head.status}`,
+            expected: `HEAD ${getResult.status}`,
+          },
+        ],
       }),
     );
   }
@@ -95,7 +108,9 @@ export async function checkTransport(
         rule: 'head-get-content-type-mismatch',
         severity: 'moderate',
         title: `HEAD advertises "${headType}" but GET serves "${getType}"`,
-        detail: 'Content negotiation differs by method, which breaks cache keys and content sniffing.',
+        instances: [
+          { target: target.url, measured: `HEAD: ${headType}`, expected: `GET: ${getType}` },
+        ],
       }),
     );
   }
@@ -119,13 +134,36 @@ export async function runHttpLane(
   const started = Date.now();
   const findings: Finding[] = [];
   const errors: string[] = [];
+  const coverage = new CoverageTracker();
+
+  /** Tools this lane is configured to run, for accurate "skipped" records. */
+  const enabled: Array<[ToolName, boolean]> = [
+    ['semantics', opts.tools.semantics],
+    ['html-validate', opts.tools.htmlValidate],
+    ['nu-validator', opts.tools.nuValidator],
+    ['lychee', opts.tools.lychee],
+  ];
 
   // --- fetch every page once, shared by all downstream checks ---------------
   const fetched = await mapPool(pages, opts.concurrency, async (page) => {
+    coverage.page(page.url, page.site);
     try {
-      return { target: page, page: await fetchPage(page.url, { timeoutMs: opts.timeoutMs }) };
+      const result = await fetchPage(page.url, { timeoutMs: opts.timeoutMs });
+      coverage.status(page.url, page.site, result.status);
+      coverage.record(page.url, page.site, 'fetch', 'ok');
+      return { target: page, page: result };
     } catch (err) {
-      errors.push(`fetch ${page.url}: ${err instanceof Error ? err.message : String(err)}`);
+      const reason = err instanceof Error ? err.message : String(err);
+      errors.push(`fetch ${page.url}: ${reason}`);
+      coverage.record(page.url, page.site, 'fetch', 'error', { reason });
+      // Nothing downstream can run without a body. Say so explicitly rather
+      // than leaving the page looking clean.
+      coverage.skip(
+        page.url,
+        page.site,
+        enabled.map(([tool]) => tool),
+        'page could not be fetched',
+      );
       findings.push(
         makeFinding({
           site: page.site,
@@ -135,7 +173,8 @@ export async function runHttpLane(
           rule: 'unreachable',
           severity: 'critical',
           title: 'Page could not be fetched',
-          detail: err instanceof Error ? err.message : String(err),
+          detail: reason,
+          instances: [{ target: page.url, message: reason }],
         }),
       );
       return null;
@@ -146,26 +185,42 @@ export async function runHttpLane(
     (entry): entry is { target: PageTarget; page: FetchedPage } => entry !== null,
   );
   if (live.length === 0) {
-    return { findings, errors, durationMs: Date.now() - started };
+    return { findings, errors, coverage: coverage.list(), durationMs: Date.now() - started };
   }
 
   // --- per-page, in-process checks ------------------------------------------
   if (opts.tools.semantics) {
     for (const { target: pageTarget, page } of live) {
-      findings.push(...checkSemantics(pageTarget, page));
+      const produced = checkSemantics(pageTarget, page);
+      findings.push(...produced);
+      coverage.record(pageTarget.url, pageTarget.site, 'semantics', 'ok', {
+        findings: produced.length,
+      });
+    }
+  } else {
+    for (const { target } of live) {
+      coverage.record(target.url, target.site, 'semantics', 'skipped', { reason: 'disabled' });
     }
   }
 
   if (opts.tools.htmlValidate) {
     const perPage = await mapPool(live, opts.concurrency, async ({ target: t, page }) => {
       try {
-        return await checkHtmlValidate(t, page);
+        const produced = await checkHtmlValidate(t, page);
+        coverage.record(t.url, t.site, 'html-validate', 'ok', { findings: produced.length });
+        return produced;
       } catch (err) {
-        errors.push(`html-validate ${t.url}: ${err instanceof Error ? err.message : String(err)}`);
+        const reason = err instanceof Error ? err.message : String(err);
+        errors.push(`html-validate ${t.url}: ${reason}`);
+        coverage.record(t.url, t.site, 'html-validate', 'error', { reason });
         return [];
       }
     });
     findings.push(...perPage.flat());
+  } else {
+    for (const { target } of live) {
+      coverage.record(target.url, target.site, 'html-validate', 'skipped', { reason: 'disabled' });
+    }
   }
 
   // --- batched, process-based checks ----------------------------------------
@@ -211,5 +266,27 @@ export async function runHttpLane(
 
   findings.push(...nuFindings, ...linkFindings, ...transportFindings);
 
-  return { findings, errors, durationMs: Date.now() - started };
+  // The two process-based checks run over the whole batch at once, so their
+  // outcome is per batch, not per page. Attribute it to every page the batch
+  // carried, otherwise a failed JVM would leave 40 pages looking validated.
+  const recordBatch = (tool: ToolName, enabledFlag: boolean, produced: Finding[]): void => {
+    const counts = countFindingsByUrl(produced);
+    const failed = errors.some((e) => e.startsWith(`${tool}:`));
+    for (const { target } of live) {
+      if (!enabledFlag) {
+        coverage.record(target.url, target.site, tool, 'skipped', { reason: 'disabled' });
+      } else if (failed) {
+        coverage.record(target.url, target.site, tool, 'error', { reason: 'batch failed' });
+      } else {
+        coverage.record(target.url, target.site, tool, 'ok', {
+          findings: counts.get(target.url) ?? 0,
+        });
+      }
+    }
+  };
+
+  recordBatch('nu-validator', opts.tools.nuValidator, nuFindings);
+  recordBatch('lychee', opts.tools.lychee, linkFindings);
+
+  return { findings, errors, coverage: coverage.list(), durationMs: Date.now() - started };
 }

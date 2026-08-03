@@ -14,12 +14,34 @@ import { AxeBuilder } from '@axe-core/playwright';
 import type { Page } from 'playwright';
 
 import { makeFinding, severityFromImpact, truncate } from '../../core/finding.js';
-import type { Finding, PageTarget } from '../../core/types.js';
+import type { Finding, FindingInstance, PageTarget } from '../../core/types.js';
+
+/** One `any`/`all`/`none` check axe ran against a node. */
+interface AxeCheck {
+  id?: string;
+  message?: string;
+  /**
+   * Whatever the check measured. For colour-contrast this carries the exact
+   * ratio and both colours -- the difference between "contrast is wrong
+   * somewhere" and "2.45:1, #a6a09b on #fbf9f3, needs 4.5:1".
+   */
+  data?: {
+    contrastRatio?: number;
+    expectedContrastRatio?: string | number;
+    fgColor?: string;
+    bgColor?: string;
+    fontSize?: string;
+    fontWeight?: string;
+  } | null;
+}
 
 interface AxeNode {
   html?: string;
   target?: unknown[];
   failureSummary?: string;
+  any?: AxeCheck[];
+  all?: AxeCheck[];
+  none?: AxeCheck[];
 }
 
 interface AxeResult {
@@ -28,6 +50,7 @@ interface AxeResult {
   help?: string;
   description?: string;
   helpUrl?: string;
+  tags?: string[];
   nodes?: AxeNode[];
 }
 
@@ -36,6 +59,43 @@ function selectorOf(node: AxeNode | undefined): string | undefined {
   if (typeof first === 'string') return first;
   if (Array.isArray(first) && typeof first[0] === 'string') return first[0];
   return undefined;
+}
+
+/**
+ * Turns one axe node into a pinpointed occurrence.
+ *
+ * axe already knows exactly what is wrong with each element; the job here is to
+ * carry that across instead of collapsing it into a rule name. Reporting
+ * "697 contrast failures" when axe measured every single ratio wastes the only
+ * part of the output a developer can act on.
+ */
+function instanceOf(node: AxeNode): FindingInstance {
+  const checks = [...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])];
+  const withData = checks.find((c) => c.data && c.data.contrastRatio !== undefined);
+  const data = withData?.data;
+
+  const instance: FindingInstance = {};
+
+  const selector = selectorOf(node);
+  if (selector !== undefined) instance.selector = selector;
+  if (node.html) instance.snippet = truncate(node.html, 160);
+
+  // Prefer the per-check message: it names this element's actual problem,
+  // where failureSummary is identical for every node of the rule.
+  const message = checks.find((c) => (c.message ?? '').trim() !== '')?.message;
+  if (message) instance.message = truncate(message, 220);
+  else if (node.failureSummary) instance.message = truncate(node.failureSummary, 220);
+
+  if (data?.contrastRatio !== undefined) {
+    const colours =
+      data.fgColor && data.bgColor ? ` (${data.fgColor} on ${data.bgColor})` : '';
+    instance.measured = `${data.contrastRatio}:1${colours}`;
+    if (data.expectedContrastRatio !== undefined) {
+      instance.expected = String(data.expectedContrastRatio).replace(/:1$/, '') + ':1';
+    }
+  }
+
+  return instance;
 }
 
 /**
@@ -53,7 +113,6 @@ export async function checkAxe(
 
   const emit = (result: AxeResult, severity: ReturnType<typeof severityFromImpact> | 'info'): void => {
     const nodes = result.nodes ?? [];
-    const first = nodes[0];
     findings.push(
       makeFinding({
         site: target.site,
@@ -63,11 +122,11 @@ export async function checkAxe(
         rule: result.id,
         severity,
         title: result.help ?? result.description ?? result.id,
-        detail: truncate(first?.failureSummary ?? result.description ?? '', 300) || undefined,
-        location: {
-          ...(selectorOf(first) ? { selector: selectorOf(first) } : {}),
-          ...(first?.html ? { snippet: truncate(first.html, 160) } : {}),
-        },
+        detail: truncate(result.description ?? '', 300) || undefined,
+        // EVERY failing node, not just the first.
+        instances: nodes.map(instanceOf),
+        // axe's own tags decode into the WCAG criteria the rule implements.
+        ...(result.tags ? { tags: result.tags } : {}),
         ...(result.helpUrl ? { helpUrl: result.helpUrl } : {}),
         ...(evidence ? { evidence } : {}),
         count: Math.max(1, nodes.length),
