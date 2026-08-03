@@ -319,6 +319,26 @@ function collectLayoutIssues(opts: {
     if (clamp && clamp !== 'none' && clamp.trim() !== '') continue;
 
     const box = el.getBoundingClientRect();
+
+    /**
+     * `sr-only` is text deliberately clipped to nothing so that a screen reader
+     * still announces it. The clipping IS the technique -- there is no cropped
+     * layout here, and nothing was ever meant to be seen.
+     *
+     * Caught on somnic.sogood.business, where the rule reported
+     * `<label class="sr-only">Adresa ta de email</label>` as "21px of text
+     * cropped" from a 1x1 box. Every visually-hidden helper in every framework
+     * would have produced the same row: Tailwind's `sr-only`, Bootstrap's
+     * `.visually-hidden`, and the hand-rolled `clip: rect(0,0,0,0)` all end at a
+     * box with no area and `overflow: hidden`.
+     *
+     * The test is the box, not the class name: a container an eye cannot see
+     * into cannot be visibly cropping anything.
+     */
+    const collapsedByClipPath = /^inset\(\s*(50|100)%/.test(style.clipPath);
+    const positioned = style.position === 'absolute' || style.position === 'fixed';
+    const collapsedByLegacyClip = positioned && /^rect\(\s*[01]px/.test(style.clip);
+    if (box.width <= 1 || box.height <= 1 || collapsedByClipPath || collapsedByLegacyClip) continue;
     const textBottom = lowestTextBottom(el);
     if (textBottom === -Infinity) continue; // nothing but decoration in here
 

@@ -108,6 +108,7 @@ treated as a verdict:
 | 72 tap targets below 24px | Conforming under SC 2.5.8's **spacing** exception — nav links sat 47–110px apart |
 | Content clipped by 40px | An `aria-hidden` decorative blur blob; the text ended 56px *above* the crop |
 | 12 clipped card teasers | `-webkit-line-clamp: 2` — deliberate truncation, the design |
+| `<label>` cropped by 21px | `sr-only`: a 1×1 box with `clip-path: inset(50%)`. The clipping IS the technique — there is no sighted user to crop it from |
 | 242 broken links incl. `/api/waitlist` | A `<form action>`, POST-only. A GET from a link checker proves nothing |
 | 3 controls "blocked" by the sogood badge | Two were clickable **where they stood**; the third was free 200px down a 722px page |
 
@@ -270,6 +271,20 @@ platform-wide / widespread / tenant-specific.
 - **`HEAD /` returns 404 `application/json` while `GET /` returns 200 `text/html`** on the hub.
   Breaks CDN caches, uptime monitors, link checkers, social preview crawlers.
 - Tenant sitemaps list pages that **404** (e.g. `pawdium.../blog`).
+- **Light text on a photo with too thin a scrim.** somnic's hero is
+  `bg-gradient-to-b from-neutral/55 via-neutral/25 to-neutral/50`, thinned to `/40 /15 /45`
+  above `md`. The body paragraph is `text-white/90`, the legal line `text-white/70`. Measured
+  over the rendered pixels the paragraph is **1.97:1** on desktop against 4.5 required, while
+  the SAME sentence reaches 16:1 where the photo happens to be dark. A scrim is only as good
+  as the brightest part of the picture under it, so this fails wherever the photo is light and
+  passes elsewhere — which is why it reads as "faded" rather than "broken" and why nobody
+  fixes it. Desktop is worse than mobile here: the `md:` variants make the scrim *thinner*.
+- **`whitespace-nowrap` trust badges force a sideways scroll.** `/products` at 390px has a
+  `scrollWidth` of 587px and really does pan 197px (`scrollTo(9999,0)` → `scrollX === 197`).
+  The two offenders are `<span class="whitespace-nowrap">Facut in Romania</span>` and
+  `Inregistrat ANSVSA`.
+- **The sogood badge itself fails contrast**: `Built with` measures **2.43:1** on every page.
+  axe independently says 2.45:1 — two engines, two methods, same answer.
 
 ---
 
