@@ -36,15 +36,31 @@ function severityFromLevel(level: string | undefined): Severity | null {
   switch (level) {
     case 'violation':
       return 'serious';
+    /**
+     * equal-access could NOT decide these; it is asking a human to look.
+     * Their messages say so in as many words -- "Verify color is not used as
+     * the only visual means", "Check the keyboard focus indicator is visible",
+     * "Confirm the word 'right' is not the only cue".
+     *
+     * Ranked as a moderate defect they outranked real ones and, worse, reached
+     * the headline as things "a visitor would notice" while being unable to
+     * name a single element to look at: one of them pointed at a stylesheet in
+     * <head>. axe already treats its own undecided results this way, and the
+     * reasoning is identical, so the convention is now shared.
+     */
     case 'potentialviolation':
-      return 'moderate';
-    case 'recommendation':
-      return 'minor';
     case 'manual':
       return 'info';
+    case 'recommendation':
+      return 'minor';
     default:
       return null; // 'pass' and anything unknown are dropped
   }
+}
+
+/** Did equal-access decide, or is it asking a human to? */
+function needsReview(level: string | undefined): boolean {
+  return level === 'potentialviolation' || level === 'manual';
 }
 
 /**
@@ -168,7 +184,11 @@ export async function checkIbm(
         url: target.url,
         lane: 'browser',
         tool: 'ibm-equal-access',
-        rule: result.ruleId ?? 'unknown',
+        // Same naming as axe's undecided results, so "did an engine actually
+        // decide this" is answerable from the rule id alone.
+        rule: needsReview(result.level)
+          ? `${result.ruleId ?? 'unknown'}-needs-review`
+          : (result.ruleId ?? 'unknown'),
         severity,
         title: result.message ?? result.ruleId ?? 'Accessibility issue',
         // equal-access reports one result per element, so each finding carries

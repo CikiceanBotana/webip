@@ -1,5 +1,5 @@
 {
-  "id": "ad72d1fb5c097b3f",
+  "id": "8ce932f80bee26bc",
   "site": "https://somnic.sogood.business",
   "url": "https://somnic.sogood.business/products",
   "lane": "browser",
@@ -8,13 +8,13 @@
   "category": "performance",
   "audience": "visitor",
   "severity": "minor",
-  "title": "Largest Contentful Paint (4.3 s)",
+  "title": "Largest Contentful Paint (4.1 s)",
   "detail": "Largest Contentful Paint marks the time at which the largest text or image is painted. [Learn more about the Largest Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-largest-contentful-paint/)",
   "remedy": "Largest Contentful Paint marks the time at which the largest text or image is painted. [Learn more about the Largest Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-largest-contentful-paint/)",
   "instances": [
     {
-      "message": "Largest Contentful Paint — page-level result, scored 41/100 for this document",
-      "measured": "4.3 s",
+      "message": "Largest Contentful Paint — page-level result, scored 47/100 for this document",
+      "measured": "4.1 s",
       "expected": "a passing Lighthouse score (>= 90/100)",
       "target": "https://somnic.sogood.business/products"
     }

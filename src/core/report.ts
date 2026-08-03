@@ -22,6 +22,7 @@ import {
   groupBySite,
   sortFindings,
 } from './finding.js';
+import { buildHeadline } from './headline.js';
 import { rollupIssues } from './issues.js';
 import {
   SEVERITIES,
@@ -66,6 +67,40 @@ export function printSummary(report: RunReport, limit = 25): void {
     `  ${stats.sitesScanned} sites · ${stats.pagesFastLane} pages fast lane · ${stats.pagesBrowserLane} pages browser lane · ${Math.round(report.durationMs / 1000)}s`,
   );
   console.log(line);
+
+  /**
+   * The answer, before any of the counting.
+   *
+   * The owner of a scanned site opened findings.json, met 770 rows and 3,191
+   * occurrences, and could not find the four defects he already knew about. All
+   * of that data was true and none of it was the answer. Lead with the short
+   * list; the totals below are how it was arrived at.
+   */
+  if (report.headline.length > 0) {
+    console.log('\n  WHAT A VISITOR WOULD NOTICE');
+    report.headline.forEach((item, index) => {
+      console.log(
+        `\n    ${String(index + 1).padStart(2)}. [${item.severity}] ${item.title}`,
+      );
+      console.log(
+        `        ${item.sitesAffected} site(s) · ${item.pagesAffected} page(s) · ${item.occurrences} occurrence(s)`,
+      );
+      // Name the actual words on the page. A CSS path is not an answer to
+      // "where" for anyone who is not already in devtools.
+      for (const place of item.where) {
+        const what = place.what ? `"${place.what.slice(0, 46)}"` : (place.selector ?? '');
+        const measured = place.measured ? `  ${place.measured}` : '';
+        console.log(`        · ${what}${measured}`);
+        console.log(`          ${place.page}`);
+      }
+    });
+    if (report.headlineOmitted > 0) {
+      console.log(`\n    ... and ${report.headlineOmitted} more, in issues[]`);
+    }
+    console.log(
+      `\n    Everything else -- ${report.issues.length} rules, ${stats.occurrencesTotal} occurrences -- is evidence, in issues[] and findings[].`,
+    );
+  }
 
   console.log('\n  BY SEVERITY');
   for (const severity of SEVERITIES) {
@@ -422,6 +457,9 @@ export function buildReport(input: {
   pagesBrowserLane: number;
 }): RunReport {
   const findings = sortFindings(input.findings);
+  const issues = rollupIssues(findings, input.sitesScanned);
+  const { headline, omitted } = buildHeadline(issues, findings);
+
   return {
     schema: 'webip/2',
     startedAt: input.startedAt.toISOString(),
@@ -429,6 +467,8 @@ export function buildReport(input: {
     durationMs: input.finishedAt.getTime() - input.startedAt.getTime(),
     config: input.config,
     integrity: assessIntegrity(input.coverage),
+    headline,
+    headlineOmitted: omitted,
     stats: {
       sitesScanned: input.sitesScanned,
       pagesFastLane: input.pagesFastLane,
@@ -440,7 +480,7 @@ export function buildReport(input: {
       byAudience: countByAudience(findings),
       byTool: countByTool(findings),
     },
-    issues: rollupIssues(findings, input.sitesScanned),
+    issues,
     findings,
     coverage: {
       byTool: summariseByTool(input.coverage),

@@ -76,6 +76,16 @@ export interface FindingInstance {
   /** 1-based source position, when the tool reports one. */
   line?: number;
   column?: number;
+  /**
+   * The visible text of the offending element, or the asset it points at.
+   *
+   * "Where is it" is not answered by a CSS path. A person looking for the
+   * defect on their own page scans for words, not for
+   * `div.grid > article.backdrop-blur-md > h2.font-display`. This is the field
+   * that says **"Standard Session"** or **"★"** or `/images/hero.webp`, so the
+   * reader can find the thing on screen without opening devtools.
+   */
+  text?: string;
   /** What is wrong with THIS occurrence specifically. */
   message?: string;
   /** The value actually observed: "2.45:1", "32x20px", "418 KiB", "404". */
@@ -280,6 +290,40 @@ export interface Issue {
 }
 
 /** Everything a run produces. */
+/**
+ * One place to look. `what` is the point of it: the actual words on screen, so
+ * the defect can be found by reading the page rather than by querying the DOM.
+ */
+export interface HeadlineWhere {
+  page: string;
+  /** The visible text, or the asset, that is wrong. */
+  what?: string;
+  selector?: string;
+  snippet?: string;
+  measured?: string;
+  expected?: string;
+}
+
+/**
+ * One line of the answer: a defect named the way its owner would name it,
+ * with every engine that reported it folded into a single entry.
+ */
+export interface Headline {
+  title: string;
+  severity: Severity;
+  sitesAffected: number;
+  pagesAffected: number;
+  occurrences: number;
+  howToFix: string;
+  /** The `tool/rule` keys folded into this line, so the detail stays findable. */
+  rules: string[];
+  /**
+   * Where to look, several places, spread across pages. A line that says text
+   * is too faint but cannot say WHICH text is a slogan, not a work item.
+   */
+  where: HeadlineWhere[];
+}
+
 export interface RunReport {
   /** Format version, so consumers can detect a shape change. */
   schema: 'webip/2';
@@ -301,7 +345,15 @@ export interface RunReport {
     byAudience: Record<string, number>;
     byTool: Record<string, number>;
   };
-  /** Rolled up per rule: the fix plan. */
+  /**
+   * THE ANSWER. The handful of defects a visitor to the site would notice,
+   * grouped by what is wrong rather than by which engine noticed it, most
+   * serious first. Read this; everything below it is the evidence for it.
+   */
+  headline: Headline[];
+  /** How many further visitor-visible themes did not make the headline. */
+  headlineOmitted: number;
+  /** Rolled up per rule: the full fix plan, one row per rule. */
   issues: Issue[];
   /** Per page, per rule, with every occurrence pinpointed. */
   findings: Finding[];

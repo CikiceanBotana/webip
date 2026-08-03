@@ -1,7 +1,7 @@
 {
-  "id": "72ee88e2fbb036e8",
-  "site": "https://cuddletherapyaz.com",
-  "url": "https://cuddletherapyaz.com/pages/about",
+  "id": "8160a301dcc98103",
+  "site": "https://forkstead.sogood.business",
+  "url": "https://forkstead.sogood.business/about",
   "lane": "browser",
   "tool": "lighthouse",
   "rule": "meta-description",
@@ -14,7 +14,7 @@
   "instances": [
     {
       "message": "Document does not have a meta description — page-level result, scored 0/100 for this document",
-      "target": "https://cuddletherapyaz.com/pages/about"
+      "target": "https://forkstead.sogood.business/about"
     }
   ],
   "count": 1,

@@ -22,6 +22,7 @@ import { describe, it } from 'node:test';
 import { classify } from '../src/core/catalog.js';
 import { CoverageTracker, assessIntegrity, summariseByTool } from '../src/core/coverage.js';
 import { MAX_INSTANCES, collapse, countOccurrences, makeFinding } from '../src/core/finding.js';
+import { MAX_HEADLINE, buildHeadline } from '../src/core/headline.js';
 import { rollupIssues, scopeFor } from '../src/core/issues.js';
 import { fetchPage } from '../src/core/net.js';
 import { parseStream } from '../src/core/stream.js';
@@ -416,6 +417,154 @@ describe('a navigation that survives a phone viewport without adapting to it', (
       hidden: [],
     };
     assert.equal(assessCrowding(wide, stacked).touching.length, 0);
+  });
+});
+
+describe('the headline is the answer, not the archive', () => {
+  const contrastFindings = [
+    finding({
+      tool: 'contrast',
+      rule: 'contrast-over-image',
+      category: 'accessibility',
+      instances: [inst('p.hero', { text: 'Formula botanica', measured: '1.97:1' })],
+    }),
+    finding({
+      tool: 'axe-core',
+      rule: 'color-contrast',
+      category: 'accessibility',
+      instances: [inst('span.badge', { text: 'Built with', measured: '2.45:1' })],
+    }),
+    finding({
+      tool: 'ibm-equal-access',
+      rule: 'text_contrast_sufficient',
+      category: 'accessibility',
+      instances: [inst('h1.title', { text: 'odihna pentru tine', measured: '1.73:1' })],
+    }),
+    finding({
+      tool: 'layout',
+      rule: 'no-mobile-navigation',
+      category: 'layout',
+      instances: [inst('header', { text: 'About', measured: '1 destination at 390px' })],
+    }),
+    finding({
+      tool: 'nu-validator',
+      rule: 'Trailing slash on void elements',
+      category: 'markup',
+      instances: [inst('img', { snippet: '<img src="a.png"/>' })],
+    }),
+  ];
+
+  it('folds one defect reported by several engines into a single line', () => {
+    // Text contrast arrived as four separate rows -- our pixel sampler, axe,
+    // IBM and Lighthouse -- which is one problem to fix, not four.
+    const issues = rollupIssues(contrastFindings, 1);
+    const { headline } = buildHeadline(issues, contrastFindings);
+
+    const contrast = headline.filter((h) => h.rules.some((r) => /contrast/.test(r)));
+    assert.equal(contrast.length, 1, 'one defect, one line');
+    assert.equal(contrast[0]?.rules.length, 3, 'but all three engines stay findable');
+  });
+
+  it('leaves developer spec deviations out of it entirely', () => {
+    const issues = rollupIssues(contrastFindings, 1);
+    const { headline } = buildHeadline(issues, contrastFindings);
+    assert.ok(
+      !headline.some((h) => h.rules.some((r) => r.includes('nu-validator'))),
+      'a trailing slash is real, but it is not what a visitor notices',
+    );
+  });
+
+  it('never grows without bound, and says how much it withheld', () => {
+    const { headline, omitted } = buildHeadline(
+      rollupIssues(contrastFindings, 1),
+      contrastFindings,
+    );
+    assert.ok(headline.length <= MAX_HEADLINE);
+    assert.equal(typeof omitted, 'number');
+  });
+
+  it('never presents raw markup as the words to look for', () => {
+    // Snippets are truncated to a fixed width, so the last tag is usually cut
+    // open. One header came back described as `<img src="https://api.sgdint`.
+    const cut = [
+      finding({
+        tool: 'layout',
+        rule: 'mobile-navigation-cramped',
+        category: 'layout',
+        severity: 'moderate',
+        instances: [
+          inst('header', {
+            snippet: '<header class="sticky"><nav>How it works</nav><img src="https://api.sgdint',
+          }),
+        ],
+      }),
+    ];
+    const { headline } = buildHeadline(rollupIssues(cut, 1), cut);
+    const what = headline[0]?.where[0]?.what ?? '';
+    assert.ok(!what.includes('<'), `raw markup leaked into the description: ${what}`);
+    assert.equal(what, 'How it works');
+  });
+
+  it('drops a defect it cannot point at, rather than printing a slogan', () => {
+    // IBM's undecided rules cannot name an element -- one pointed at a
+    // stylesheet in <head>. A line nobody can act on is not an answer.
+    const unlocatable = [
+      finding({
+        tool: 'ibm-equal-access',
+        rule: 'style_color_misuse-needs-review',
+        category: 'accessibility',
+        severity: 'moderate',
+        instances: [inst('/html[1]/head[1]/link[7]', { snippet: '<link rel="stylesheet">' })],
+      }),
+    ];
+    const { headline } = buildHeadline(rollupIssues(unlocatable, 1), unlocatable);
+    assert.equal(headline.length, 0);
+  });
+
+  it('names the offending words, not just a CSS path', () => {
+    // "Where" has to be answerable by looking at the page. A generated selector
+    // is only useful to somebody already in devtools.
+    const withPlace = [
+      finding({
+        tool: 'contrast',
+        rule: 'contrast-over-image',
+        category: 'accessibility',
+        instances: [
+          inst('p.hero', {
+            text: 'Formula botanica naturala',
+            measured: '1.97:1',
+            expected: '4.5:1',
+          }),
+        ],
+      }),
+    ];
+    const { headline } = buildHeadline(rollupIssues(withPlace, 1), withPlace);
+    assert.equal(headline[0]?.where[0]?.what, 'Formula botanica naturala');
+    assert.equal(headline[0]?.where[0]?.measured, '1.97:1');
+    assert.equal(headline[0]?.where[0]?.page, 'https://a.example/');
+  });
+
+  it('refuses to point at a stylesheet as the place to look', () => {
+    // IBM reports its page-level rules against whatever node it stood on; one
+    // pointed at /html[1]/head[1]/link[7], which is true and useless.
+    const vague = [
+      finding({
+        tool: 'ibm-equal-access',
+        rule: 'style_color_misuse',
+        category: 'accessibility',
+        severity: 'moderate',
+        instances: [
+          inst('/html[1]/head[1]/link[7]', { snippet: '<link href="/a.css" rel="stylesheet">' }),
+          inst('button.buy', { text: 'Add to basket' }),
+        ],
+      }),
+    ];
+    const { headline } = buildHeadline(rollupIssues(vague, 1), vague);
+    assert.equal(headline[0]?.where[0]?.what, 'Add to basket');
+    assert.ok(
+      !headline[0]?.where.some((w) => w.selector?.includes('head')),
+      'a stylesheet is never the thing to look at',
+    );
   });
 });
 

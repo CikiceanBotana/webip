@@ -18,6 +18,7 @@
     {
       "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > h2.font-display.text-xl",
       "snippet": "<h2 class=\"font-display text-xl text-primary leading-tight\">Standard Session</h2>",
+      "text": "Standard Session",
       "message": "\"Standard Session\" at 177,927 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
       "measured": "3.50:1 (rgb(139, 80, 64) on rgb(241, 178, 160), 20px)",
       "expected": "4.5:1"
@@ -25,6 +26,7 @@
     {
       "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > span.text-lg.font-semibold",
       "snippet": "<span class=\"text-lg font-semibold text-secondary whitespace-nowrap\">$<!-- -->120</span>",
+      "text": "$",
       "message": "\"$\" at 563,930 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
       "measured": "3.87:1 (rgb(128, 89, 48) on rgb(244, 193, 179), 18px)",
       "expected": "4.5:1"
@@ -32,6 +34,7 @@
     {
       "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > span.text-lg.font-semibold",
       "snippet": "<span class=\"text-lg font-semibold text-secondary whitespace-nowrap\">$<!-- -->120</span>",
+      "text": "120",
       "message": "\"120\" at 573,930 on the page - text sits on a gradient; measured against the rendered pixels at its worst point",
       "measured": "3.90:1 (rgb(128, 89, 48) on rgb(244, 194, 179), 18px)",
       "expected": "4.5:1"

@@ -319,3 +319,54 @@ export function groupBySite(findings: readonly Finding[]): Map<string, Finding[]
     ),
   );
 }
+
+/**
+ * The visible text of an occurrence: the words a reader can search the page
+ * for. Adapters that know it set `text` directly; the rest have it recovered
+ * from whatever they did report.
+ */
+export function describeLocation(instance: FindingInstance): string | undefined {
+  if (instance.text !== undefined && instance.text.trim() !== '') return instance.text.trim();
+
+  // Several adapters quote the offending run inside their own prose, e.g.
+  // `"Standard Session" at 177,927 on the page - text sits on a gradient`.
+  const quoted = /"([^"]{1,80})"/.exec(instance.message ?? '');
+  if (quoted?.[1]) return quoted[1];
+
+  const stripped = (instance.snippet ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    // Snippets are truncated to a fixed width, so the last tag is often cut
+    // open. Without this the "visible text" of a header came back as
+    // `<img src="https://api.sgdinternal.com/public/l` -- markup, presented to
+    // the reader as the words to look for.
+    .replace(/<[^>]*$/, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped === '' ? undefined : stripped.slice(0, 80);
+}
+
+/**
+ * How well does this occurrence answer "where do I look"?
+ *
+ * Not every occurrence answers it equally, and picking the wrong one makes an
+ * otherwise correct finding useless. IBM reports its page-level rules against
+ * whatever node it happened to be standing on: one of them pointed at
+ * `/html[1]/head[1]/link[7]`, a stylesheet, which is perfectly true and tells a
+ * reader nothing about where the colour problem is on their page.
+ *
+ * Naming the offending words beats naming a CSS path, a CSS path beats an
+ * XPath, and anything beats a `<head>` node -- so whenever only one occurrence
+ * can be shown, this decides which one earns the slot.
+ */
+export function locationScore(instance: FindingInstance): number {
+  let score = 0;
+  if (describeLocation(instance) !== undefined) score += 4;
+  if (instance.measured !== undefined) score += 2;
+  if (instance.selector !== undefined && !instance.selector.startsWith('/html')) score += 1;
+  if (instance.target !== undefined) score += 1;
+  if (/\/head\[|^head$|\.css\b/.test(`${instance.selector ?? ''}${instance.snippet ?? ''}`)) {
+    score -= 5;
+  }
+  return score;
+}

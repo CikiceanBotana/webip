@@ -657,6 +657,9 @@ export async function checkContrast(
     failures.push({
       selector: candidate.selector,
       snippet: candidate.snippet,
+      // The words themselves, so the reader can find them on the page by
+      // looking rather than by matching a generated CSS path in devtools.
+      text: candidate.text,
       message: `"${candidate.text}"${at} - ${candidate.reason}; measured against the rendered pixels at its worst point`,
       measured: `${result.ratio.toFixed(2)}:1 (${result.fg} on ${result.bg}, ${Math.round(candidate.fontSize)}px${candidate.bold ? ' bold' : ''})`,
       expected: `${required}:1`,

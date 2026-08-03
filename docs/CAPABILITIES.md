@@ -9,7 +9,7 @@ npm run examples -- out/showcase/findings.json
 ```
 
 That run finished with `integrity.ok: true`, **zero scan errors** and every one
-of the eleven checks completing on all 40 pages — which is what makes the
+of the eleven checks completing on every page — which is what makes the
 numbers below quotable at all. A run where a tool failed everywhere would look
 exactly like a clean site, so `npm run examples` refuses to generate from one.
 
@@ -26,7 +26,66 @@ that script fails loudly rather than quietly shipping a shorter page.
 
 ---
 
-## 1. Every finding is classified on four independent axes
+## 1. The answer comes first: `headline`
+
+`findings.json` opens with a short list of what a visitor to the site would
+actually notice. On the showcase run that is **five lines**, above 62 rules and
+2,066 occurrences of evidence.
+
+That ordering was not the original design, and the correction came from a site
+owner who opened the file, met 770 rows, and could not find the four defects he
+already knew about. Every one of those rows was true. None of them was the
+answer. Three things were wrong:
+
+- **Rules, not problems.** A trailing slash on a void element ranked beside
+  "there is no navigation on a phone", because both are rules that fired.
+- **One defect counted three times.** Faint text arrived as
+  `contrast/contrast-over-image`, `axe-core/color-contrast` **and**
+  `ibm-equal-access/text_contrast_sufficient` -- three rows, one thing to fix.
+  They are now folded into one line, with every contributing rule listed under
+  `rules` so the detail stays findable. When two engines disagree slightly
+  (2.43:1 by pixel sampling, 2.45:1 by axe) that is corroboration, not two jobs.
+- **No answer to "where".** An entry that cannot name the offending element is
+  a slogan. `where` now carries the **visible text** -- `"Standard Session"`,
+  `"How it works"`, `"Facut in Romania"` -- so the defect can be found by
+  reading the page rather than by pasting a CSS path into devtools.
+
+```jsonc
+{
+  "title": "Text is too faint to read against what is behind it",
+  "severity": "serious",
+  "sitesAffected": 4, "pagesAffected": 24, "occurrences": 181,
+  "rules": ["axe-core/color-contrast", "contrast/contrast-over-image",
+            "ibm-equal-access/text_contrast_sufficient", "lighthouse/color-contrast"],
+  "where": [
+    { "page": "https://cuddletherapyaz.com/services",
+      "what": "Standard Session",
+      "measured": "3.50:1 (rgb(139, 80, 64) on rgb(241, 178, 160), 20px)",
+      "expected": "4.5:1" }
+  ]
+}
+```
+
+Two rules keep this list honest, and both were written after it printed
+something useless:
+
+1. **Only confirmed defects.** IBM equal-access reports `potentialviolation`
+   results whose text literally reads *"Verify color is not used as the only
+   visual means"*. That is the engine asking a human to look, not a defect it
+   found, so those now land at `info` with a `-needs-review` suffix -- the
+   convention axe already used for its own undecided results -- and never reach
+   the headline.
+2. **No line without a place to look.** If nothing in a theme can name an
+   element, the line is dropped rather than printed. One such entry had pointed
+   at `/html[1]/head[1]/link[7]` -- a stylesheet -- which is perfectly true and
+   useless.
+
+Everything filtered out is still in `issues` and `findings`, in full. The
+headline reorders; it never discards.
+
+---
+
+## 2. Every finding is classified on four independent axes
 
 A list of defects sorted only by severity is close to useless on a real site: a
 trailing slash that affects nobody outrans a dead checkout link, because both
@@ -50,7 +109,7 @@ Getting that axis right takes more care than it looks. **"Accessibility" is not
 a synonym for "screen reader."** A screen reader does not render colour at all,
 so filing contrast, focus rings, tap targets and "click the green button"
 instructions under `assistive-tech` hides them from the exact filter a site
-owner reaches for. On this run that mistake moved **934 occurrences** into the
+owner reaches for. On a full 10-page pass that mistake moved **934 occurrences** into the
 wrong bucket — the split went from `visitor: 206 / assistive-tech: 1437` to
 `visitor: 1142 / assistive-tech: 503` once it was corrected — and among the
 mislabelled was a hero paragraph at 1.97:1 that the site's own owner had
@@ -80,7 +139,7 @@ than a link to nowhere.
 
 ---
 
-## 2. Navigation and the header
+## 3. Navigation and the header
 
 ### `layout/no-mobile-navigation` — proved by clicking, not by guessing
 
@@ -115,7 +174,7 @@ touches the first link at 0px"*, not "the nav looks bad".
 
 ---
 
-## 3. Text you cannot read
+## 4. Text you cannot read
 
 ### `contrast/contrast-over-image` — the answer no static engine will give
 
@@ -163,7 +222,7 @@ useful signal: the platform badge measures **2.43:1** by pixel sampling and
 
 ---
 
-## 4. Screen readers
+## 5. Screen readers
 
 > [`examples/screen-reader.json`](./examples/screen-reader.json)
 
@@ -176,7 +235,7 @@ own ruleset.
 
 ---
 
-## 5. Layout and geometry
+## 6. Layout and geometry
 
 > [`examples/layout-overflow.json`](./examples/layout-overflow.json)
 
@@ -198,7 +257,7 @@ geometric rule now has to *demonstrate* its claim:
 
 ---
 
-## 6. Markup, links and transport
+## 7. Markup, links and transport
 
 > [`examples/markup-invalid.json`](./examples/markup-invalid.json)
 
@@ -224,7 +283,7 @@ links" included several that were never links at all.
 
 ---
 
-## 7. SEO, performance and branding
+## 8. SEO, performance and branding
 
 > [`examples/seo-meta-description.json`](./examples/seo-meta-description.json) ·
 > [`examples/performance-lcp.json`](./examples/performance-lcp.json) ·
@@ -247,7 +306,7 @@ regex over prose.
 
 ---
 
-## 8. Is the run trustworthy?
+## 9. Is the run trustworthy?
 
 Two mechanisms, both born from a real incident.
 
@@ -267,7 +326,7 @@ where every browser check fails looks identical to progress.**
 
 ---
 
-## 9. What this tool deliberately does not claim
+## 10. What this tool deliberately does not claim
 
 The most important section, and the one written last.
 

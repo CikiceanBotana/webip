@@ -14,7 +14,7 @@
  *   tenant      on one or two -- that tenant's own content or configuration
  */
 
-import { severityRank } from './finding.js';
+import { locationScore, severityRank } from './finding.js';
 import type {
   Audience,
   Category,
@@ -130,10 +130,17 @@ export function rollupIssues(findings: readonly Finding[], totalSites: number): 
     // page fills the list with eight copies of one selector and teaches nothing.
     // Distinct selectors first, then repeats to demonstrate reach.
     if (entry.examples.length < EXAMPLES_PER_ISSUE) {
-      const fresh = finding.instances.find(
-        (instance) => !entry.shapes.has(shapeOf(instance)),
-      );
-      const chosen = fresh ?? finding.instances[0];
+      /**
+       * Among the unseen shapes, take the one that best answers "where".
+       *
+       * Taking merely the FIRST unseen shape once handed the example slot to
+       * `/html[1]/head[1]/link[7]` -- a stylesheet -- while a button carrying
+       * the actual offending label sat in the same list and was discarded. The
+       * finding was true and the example was useless.
+       */
+      const ranked = [...finding.instances].sort((a, b) => locationScore(b) - locationScore(a));
+      const fresh = ranked.find((instance) => !entry.shapes.has(shapeOf(instance)));
+      const chosen = fresh ?? ranked[0];
       if (chosen) {
         entry.shapes.add(shapeOf(chosen));
         entry.examples.push({ url: finding.url, ...chosen });
