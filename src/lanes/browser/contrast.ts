@@ -428,10 +428,24 @@ export async function checkContrast(
       reason = candidate.reason;
     }
 
+    /**
+     * Where on the page, in document coordinates.
+     *
+     * Not decoration. Fifteen identical star glyphs in three testimonial cards
+     * generate the same short CSS path, the same snippet and the same measured
+     * ratio, so the deduper -- correctly, on the information it had -- merged
+     * all fifteen into one row. The count stayed truthful and every location
+     * but one was lost. The position is what makes two genuinely different
+     * elements different, and it is also the only answer this check can give to
+     * "where do I look" when a page repeats one component down the page.
+     */
+    const first = candidate.rects[0];
+    const at = first ? ` at ${Math.round(first.x)},${Math.round(first.y)} on the page` : '';
+
     failures.push({
       selector: candidate.selector,
       snippet: candidate.snippet,
-      message: `"${candidate.text}" - ${candidate.reason}; measured against the rendered pixels at its worst point`,
+      message: `"${candidate.text}"${at} - ${candidate.reason}; measured against the rendered pixels at its worst point`,
       measured: `${result.ratio.toFixed(2)}:1 (${result.fg} on ${result.bg}, ${Math.round(candidate.fontSize)}px${candidate.bold ? ' bold' : ''})`,
       expected: `${required}:1`,
     });
