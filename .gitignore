@@ -1,0 +1,18 @@
+node_modules/
+
+# Run output is regenerated every run and never committed.
+out/*
+!out/.gitkeep
+!out/evidence/
+out/evidence/*
+!out/evidence/.gitkeep
+
+# Downloaded third-party binaries (lychee). Version is pinned in versions.json
+# and re-fetched by scripts/install-lychee.sh, so the blob is not committed.
+bin/*
+!bin/.gitkeep
+
+# IBM equal-access checker writes its report dir here.
+results/
+.DS_Store
+*.log

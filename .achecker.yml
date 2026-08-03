@@ -1,0 +1,12 @@
+# IBM equal-access (accessibility-checker) configuration.
+#
+# This only controls where the checker writes its own artifacts. No audit
+# policy is defined here yet -- rule selection belongs to the browser lane,
+# which is not implemented in this task.
+#
+# Without this file the checker defaults to writing ./results/ at the repo
+# root; we redirect it under out/ so it lands in the gitignored run output.
+outputFolder: out/ibm-a11y
+outputFormat:
+  - json
+outputFilenameTimestamp: false

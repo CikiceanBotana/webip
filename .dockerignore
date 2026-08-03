@@ -1,0 +1,11 @@
+node_modules
+out
+dist
+results
+bin
+.git
+.gitignore
+.nvm
+*.log
+npm-debug.log*
+.DS_Store
