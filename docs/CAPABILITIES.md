@@ -50,6 +50,9 @@ answer. Three things were wrong:
   `"How it works"`, `"Facut in Romania"` -- so the defect can be found by
   reading the page rather than by pasting a CSS path into devtools.
 
+> [`examples/00-headline.json`](./examples/00-headline.json) — the whole answer,
+> exactly as `findings.json` opens.
+
 ```jsonc
 {
   "title": "Text is too faint to read against what is behind it",
@@ -131,7 +134,7 @@ metadata is decoded:
 | axe-core | 105 | its own tags — `wcag143` → `WCAG SC 1.4.3 (AA)` |
 | IBM equal-access | 174 | `getRulesets()` → checkpoints carrying `num`, `name`, `wcagLevel` |
 | Lighthouse (accessibility) | — | audit ids **are** axe rule ids, so the tags are read back off axe |
-| our own rules | 20 | written out in `src/core/catalog.ts`, because no upstream doc exists |
+| our own rules | 39 | written out in `src/core/catalog.ts`, because no upstream doc exists |
 
 That last row matters: rules we invented have no external documentation, so the
 catalog carries their full `whatIsWrong` / `howToFix` / `standards` text rather
@@ -143,7 +146,7 @@ than a link to nowhere.
 
 ### `layout/no-mobile-navigation` — proved by clicking, not by guessing
 
-> [`examples/navigation-missing.json`](./examples/navigation-missing.json)
+> [`examples/01-navigation-missing.json`](./examples/01-navigation-missing.json)
 
 The header hides its links below the `md` breakpoint and puts nothing in their
 place. Every static check passes, because the links *are* in the markup — a
@@ -164,7 +167,7 @@ All seven control sites pass.
 
 ### `layout/mobile-navigation-cramped` — the nav is there, but it is the desktop nav
 
-> [`examples/navigation-cramped.json`](./examples/navigation-cramped.json)
+> [`examples/02-navigation-cramped.json`](./examples/02-navigation-cramped.json)
 
 The harder half of the same question. The links survive at 390px, so the rule
 above correctly stays quiet — but nothing adapted: the desktop row is simply
@@ -178,7 +181,7 @@ touches the first link at 0px"*, not "the nav looks bad".
 
 ### `contrast/contrast-over-image` — the answer no static engine will give
 
-> [`examples/contrast-over-image.json`](./examples/contrast-over-image.json)
+> [`examples/03-contrast-over-image.json`](./examples/03-contrast-over-image.json)
 
 axe reports *"background color could not be determined due to a background
 gradient"* and returns INCOMPLETE. IBM says *"verify the contrast against the
@@ -213,7 +216,7 @@ Two things this buys that are worth stating plainly:
 
 ### `axe-core/color-contrast` — the same defect where static analysis is exact
 
-> [`examples/contrast-static.json`](./examples/contrast-static.json)
+> [`examples/04-contrast-static.json`](./examples/04-contrast-static.json)
 
 Text on a solid background is the one contrast case static engines nail, so it
 is left to them and deliberately not duplicated. Both engines agreeing is a
@@ -224,7 +227,7 @@ useful signal: the platform badge measures **2.43:1** by pixel sampling and
 
 ## 5. Screen readers
 
-> [`examples/screen-reader.json`](./examples/screen-reader.json)
+> [`examples/06-screen-reader.json`](./examples/06-screen-reader.json)
 
 axe (105 rules) and IBM equal-access (174 rules) run on every page and cover
 different ground — equal-access reports "potential" issues needing human
@@ -237,7 +240,7 @@ own ruleset.
 
 ## 6. Layout and geometry
 
-> [`examples/layout-overflow.json`](./examples/layout-overflow.json)
+> [`examples/05-layout-overflow.json`](./examples/05-layout-overflow.json)
 
 Rendered at 390px and again at desktop width. Horizontal overflow, elements past
 the viewport edge, content clipped by its own container, and controls that
@@ -259,7 +262,7 @@ geometric rule now has to *demonstrate* its claim:
 
 ## 7. Markup, links and transport
 
-> [`examples/markup-invalid.json`](./examples/markup-invalid.json)
+> [`examples/07-markup-invalid.json`](./examples/07-markup-invalid.json)
 
 | Check | Engine |
 | --- | --- |
@@ -285,9 +288,9 @@ links" included several that were never links at all.
 
 ## 8. SEO, performance and branding
 
-> [`examples/seo-meta-description.json`](./examples/seo-meta-description.json) ·
-> [`examples/performance-lcp.json`](./examples/performance-lcp.json) ·
-> [`examples/branding-favicon.json`](./examples/branding-favicon.json)
+> [`examples/08-seo-meta-description.json`](./examples/08-seo-meta-description.json) ·
+> [`examples/10-performance-lcp.json`](./examples/10-performance-lcp.json) ·
+> [`examples/09-branding-favicon.json`](./examples/09-branding-favicon.json)
 
 Titles, meta descriptions, canonicals, headings, Open Graph, structured data,
 `robots.txt` and sitemap reachability from the fast lane; Core Web Vitals and

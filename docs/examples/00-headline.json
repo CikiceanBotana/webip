@@ -1,0 +1,194 @@
+{
+  "_note": "The first thing in findings.json. Each line folds every engine that reported the same defect, and `where` names the visible text so it can be found by reading the page rather than by querying the DOM. Everything below it in the file is evidence.",
+  "headline": [
+    {
+      "title": "Text is too faint to read against what is behind it",
+      "severity": "serious",
+      "sitesAffected": 4,
+      "pagesAffected": 24,
+      "occurrences": 181,
+      "howToFix": "Raise the text opacity, darken or lighten the layer behind it, or place a solid backing behind the text. Check the worst point reported, not the average -- a scrim over a photo is only as good as its lightest region under light text, and the same sentence can measure 16:1 where the photo is dark and 1.8:1 forty pixels to the right.",
+      "rules": [
+        "axe-core/color-contrast",
+        "contrast/contrast-over-image",
+        "ibm-equal-access/text_contrast_sufficient",
+        "lighthouse/color-contrast"
+      ],
+      "where": [
+        {
+          "page": "https://cuddletherapyaz.com/services",
+          "what": "Standard Session",
+          "selector": "div.grid.grid-cols-1 > article.backdrop-blur-md.bg-white/20 > div.p-6.flex > div.flex.items-start > h2.font-display.text-xl",
+          "snippet": "<h2 class=\"font-display text-xl text-primary leading-tight\">Standard Session</h2>",
+          "measured": "3.50:1 (rgb(139, 80, 64) on rgb(241, 178, 160), 20px)",
+          "expected": "4.5:1"
+        },
+        {
+          "page": "https://cuddletherapyaz.com/",
+          "what": "Tempe, AZ  ·  Platonic cuddling",
+          "selector": "section.relative.isolate > div.relative.z-10 > div.glass-panel.px-8 > div.glass-scrim > p.text-xs.font-semibold",
+          "snippet": "<p class=\"text-xs font-semibold uppercase tracking-[0.2em] text-white/75\">Tempe, AZ&nbsp;&nbsp;·&nbsp;&nbsp;Platonic cuddling</p>",
+          "measured": "1.66:1 (rgb(252, 233, 227) on rgb(242, 168, 145), 12px)",
+          "expected": "4.5:1"
+        },
+        {
+          "page": "https://forkstead.sogood.business/",
+          "what": "An executive chef preps every protein, sauce, and vegetable. You assemble and he",
+          "selector": "main > section.relative.min-h-[85vh] > div.relative.flex > div.mx-auto.w-full > p.mt-6.max-w-xl",
+          "snippet": "<p class=\"mt-6 max-w-xl text-lg text-white/80\">An executive chef preps every protein, sauce, and vegetable. You assemble and heat. Your family eats restaurant q",
+          "measured": "3.68:1 (rgb(227, 227, 227) on rgb(114, 116, 113), 18px)",
+          "expected": "4.5:1"
+        },
+        {
+          "page": "https://cuddletherapyaz.com/book",
+          "what": "Your info",
+          "selector": "div.max-w-lg.mx-auto > div.backdrop-blur-md.bg-white/20 > div.mb-8 > div.flex.items-center > span.text-xs.text-base-content/50",
+          "snippet": "<span class=\"text-xs text-base-content/50\">Your info</span>",
+          "measured": "3.43:1 (rgb(137, 130, 128) on rgb(249, 243, 240), 12px)",
+          "expected": "4.5:1"
+        }
+      ]
+    },
+    {
+      "title": "There is no way to navigate the site on a phone",
+      "severity": "serious",
+      "sitesAffected": 2,
+      "pagesAffected": 12,
+      "occurrences": 36,
+      "howToFix": "Add the menu button the responsive layout assumes exists: a <button aria-expanded aria-controls> in the header, shown only below the breakpoint that hides the links, which toggles a panel containing them. Keeping the links in the footer is not a substitute -- it makes every navigation a scroll to the bottom of the page.",
+      "rules": [
+        "layout/no-mobile-navigation"
+      ],
+      "where": [
+        {
+          "page": "https://maison-clair.sogood.business/",
+          "what": "hidden md:flex",
+          "selector": "html > body.flex.min-h-screen > header.sticky.top-0",
+          "snippet": "<header class=\"sticky top-0 z-50 bg-base-100\" style=\"border-bottom:3px solid #14110a\"><nav class=\"mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3\"><a aria-current=\"page\" class=\"shrink-0 flex items-center active\" href=\"/\" data-discover=\"true\"><img src=\"https://api.sgdinternal.com/public/logos/8220f049-9413-468e-b9d1-643618f3d254/light-ffffff.svg\" alt=\"Maison Clair\" class=\"h-9 w-",
+          "measured": "1 destination(s) in the header at 390px",
+          "expected": "4 destination(s), or a menu button that reveals them"
+        },
+        {
+          "page": "https://maison-clair.sogood.business/about",
+          "what": "About",
+          "measured": "hidden",
+          "expected": "visible, or reachable through a menu button"
+        },
+        {
+          "page": "https://maison-clair.sogood.business/blog",
+          "what": "Blog",
+          "measured": "hidden",
+          "expected": "visible, or reachable through a menu button"
+        },
+        {
+          "page": "https://maison-clair.sogood.business/contact",
+          "what": "Contact",
+          "measured": "hidden",
+          "expected": "visible, or reachable through a menu button"
+        }
+      ]
+    },
+    {
+      "title": "The page scrolls sideways on a phone",
+      "severity": "serious",
+      "sitesAffected": 1,
+      "pagesAffected": 1,
+      "occurrences": 3,
+      "howToFix": "Find the element wider than its container (reported alongside this) and constrain it: max-width:100%, flex-wrap, or overflow-wrap on long unbroken strings.",
+      "rules": [
+        "layout/element-overflows-viewport-mobile",
+        "layout/horizontal-overflow-mobile"
+      ],
+      "where": [
+        {
+          "page": "https://somnic.sogood.business/products",
+          "what": "Facut in Romania",
+          "selector": "main.bg-base-100.min-h-screen > div.bg-primary/10.border-b > div.mx-auto.max-w-5xl > p.text-center.text-sm > span.whitespace-nowrap",
+          "snippet": "<span class=\"whitespace-nowrap\">Facut in Romania</span>",
+          "measured": "right edge at 439px",
+          "expected": "at most 390px"
+        },
+        {
+          "page": "https://somnic.sogood.business/products",
+          "selector": "html",
+          "measured": "587px content",
+          "expected": "390px viewport"
+        }
+      ]
+    },
+    {
+      "title": "The phone header is the desktop navigation squeezed to fit",
+      "severity": "moderate",
+      "sitesAffected": 1,
+      "pagesAffected": 6,
+      "occurrences": 18,
+      "howToFix": "Give the header a layout for narrow widths instead of letting the desktop one compress: collapse the links behind a menu button below the breakpoint, or stack them. Whichever is chosen, keep the call-to-action reachable rather than hiding it -- it is being hidden because the row has no room, which is the same problem stated twice.",
+      "rules": [
+        "layout/mobile-navigation-cramped"
+      ],
+      "where": [
+        {
+          "page": "https://forkstead.sogood.business/",
+          "what": "<img src=\"https://api.sgdinternal.com/public/logos/1b01dcf2-3ccd-4743-b6c4-0ccc0",
+          "selector": "html > body.flex.min-h-screen > header.sticky.top-0",
+          "snippet": "<header class=\"sticky top-0 z-50 border-b border-base-300 bg-base-100\"><nav class=\"mx-auto flex max-w-6xl items-center justify-between px-6 py-4\"><a aria-current=\"page\" class=\"font-display text-lg text-primary active\" href=\"/\" data-discover=\"true\"><img src=\"https://api.sgdinternal.com/public/logos/1b01dcf2-3ccd-4743-b6c4-0ccc052f838a.svg\" alt=\"Forkstead | Chef-prepped family dinners, ready in 15 m",
+          "measured": "2 label(s) wrap onto a second line; 1 pair(s) of items sit 0px apart",
+          "expected": "a layout intended for 390px"
+        },
+        {
+          "page": "https://forkstead.sogood.business/about",
+          "what": "How it works",
+          "measured": "2 lines, 61px wide",
+          "expected": "1 line"
+        },
+        {
+          "page": "https://forkstead.sogood.business/blog",
+          "what": "Our boxes",
+          "measured": "2 lines, 50px wide",
+          "expected": "1 line"
+        },
+        {
+          "page": "https://forkstead.sogood.business/contact",
+          "what": "How it works",
+          "measured": "0px gap",
+          "expected": "at least 8px"
+        }
+      ]
+    },
+    {
+      "title": "The site has no icon in the browser tab",
+      "severity": "moderate",
+      "sitesAffected": 3,
+      "pagesAffected": 3,
+      "occurrences": 3,
+      "howToFix": "Add <link rel=\"icon\" href=\"/favicon.svg\" type=\"image/svg+xml\"> plus a 32x32 PNG fallback to <head>.",
+      "rules": [
+        "branding/favicon-missing"
+      ],
+      "where": [
+        {
+          "page": "https://cuddletherapyaz.com/",
+          "what": "icon",
+          "selector": "head",
+          "measured": "no icon declared",
+          "expected": "<link rel=\"icon\" href=\"...\"> in <head>"
+        },
+        {
+          "page": "https://forkstead.sogood.business/",
+          "what": "icon",
+          "selector": "head",
+          "measured": "no icon declared",
+          "expected": "<link rel=\"icon\" href=\"...\"> in <head>"
+        },
+        {
+          "page": "https://somnic.sogood.business/",
+          "what": "icon",
+          "selector": "head",
+          "measured": "no icon declared",
+          "expected": "<link rel=\"icon\" href=\"...\"> in <head>"
+        }
+      ]
+    }
+  ],
+  "headlineOmitted": 0
+}

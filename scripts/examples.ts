@@ -9,10 +9,16 @@
  *
  *   npm run examples -- out/showcase/findings.json
  *
- * Each entry below names a rule and the reason it is worth showing. If a rule
- * stops firing, the script says so loudly instead of silently shipping a
- * shorter docs page -- a missing example means either the site was fixed or the
- * check regressed, and both are things a maintainer must be told about.
+ * Files are numbered, because the order is the argument. `00-headline.json` is
+ * the answer to "what is wrong with my site"; everything after it is the
+ * evidence for one line of that answer. An earlier version of this directory
+ * shipped ten findings rows and no headline at all, which reproduced in
+ * miniature the exact problem the headline exists to solve.
+ *
+ * Each entry below names a rule and why it is worth showing. If a rule stops
+ * firing the script says so loudly rather than quietly shipping a shorter page:
+ * a missing example means either the site was fixed or the check regressed, and
+ * both are things a maintainer must be told about.
  */
 
 import fs from 'node:fs/promises';
@@ -28,70 +34,68 @@ const OUT_DIR = path.join(ROOT, 'docs/examples');
 const KEEP_INSTANCES = 3;
 
 interface Wanted {
-  /** Output file name, without extension. */
+  /** Output file name, without extension. Numbered: the order is the argument. */
   file: string;
-  /** `tool/rule` to look for. */
+  /** `tool/rule` to look for; `*` matches any rule from that tool. */
   match: string;
   /** Why this example is in the documentation. */
   why: string;
-  /** Prefer a finding on this URL, when the rule fires on many pages. */
-  preferUrl?: string;
   /** Prefer the finding with the most occurrences rather than the first. */
   preferBusiest?: boolean;
 }
 
 const WANTED: Wanted[] = [
   {
-    file: 'navigation-missing',
+    file: '01-navigation-missing',
     match: 'layout/no-mobile-navigation',
-    why: 'Proved by interaction: every candidate toggle was clicked and the link count re-counted.',
+    why: 'Proved by interaction: every candidate toggle was clicked and the links re-counted.',
   },
   {
-    file: 'navigation-cramped',
+    file: '02-navigation-cramped',
     match: 'layout/mobile-navigation-cramped',
     why: 'The nav survives 390px but was never adapted -- measured in wrapped lines and pixel gaps.',
   },
   {
-    file: 'contrast-over-image',
+    file: '03-contrast-over-image',
     match: 'contrast/contrast-over-image',
-    why: 'The answer no static engine can give: text over a photo, scrim and translucent tint.',
+    why: 'The answer no static engine gives: text over a photo, a scrim and a translucent tint.',
     preferBusiest: true,
   },
   {
-    file: 'contrast-static',
+    file: '04-contrast-static',
     match: 'axe-core/color-contrast',
-    why: 'The same defect class on a solid background, where static analysis is exact.',
+    why: 'The same defect on a solid background, where static analysis is exact and is trusted.',
   },
   {
-    file: 'screen-reader',
-    match: 'ibm-equal-access/aria_navigation_label_unique',
-    why: 'Assistive-technology finding carrying the WCAG criterion decoded from the vendor ruleset.',
-  },
-  {
-    file: 'layout-overflow',
+    file: '05-layout-overflow',
     match: 'layout/horizontal-overflow-mobile',
     why: 'Demonstrated, not inferred: the probe scrolls the page and reads the offset back.',
   },
   {
-    file: 'markup-invalid',
+    file: '06-screen-reader',
+    match: 'ibm-equal-access/aria_navigation_label_unique',
+    why: 'Assistive-tech finding, carrying the WCAG criterion decoded from the vendor ruleset.',
+  },
+  {
+    file: '07-markup-invalid',
     match: 'nu-validator/*',
-    why: 'Spec conformance from the W3C validator, classified as developer-facing.',
+    why: 'Spec conformance from the W3C validator, classified developer-facing so it cannot rank above a visible defect.',
     preferBusiest: true,
   },
   {
-    file: 'seo-meta-description',
+    file: '08-seo-meta-description',
     match: 'lighthouse/meta-description',
     why: 'A page-level result: no element to point at, so the instance describes the document.',
   },
   {
-    file: 'branding-favicon',
+    file: '09-branding-favicon',
     match: 'branding/favicon-missing',
-    why: 'Site-level check, verified against the network rather than the markup alone.',
+    why: 'Site-level check, verified against the network rather than against the markup alone.',
   },
   {
-    file: 'performance-lcp',
+    file: '10-performance-lcp',
     match: 'lighthouse/largest-contentful-paint',
-    why: 'A measurement, reported as info because it is a number and not yet a defect.',
+    why: 'A measurement, ranked low because a number is not yet a defect.',
   },
 ];
 
@@ -123,17 +127,16 @@ function forDocs(finding: Finding): Record<string, unknown> {
 
 function pick(findings: Finding[], want: Wanted): Finding | undefined {
   const [tool, rule] = want.match.split('/');
-  let pool = findings.filter((f) => f.tool === tool && (rule === '*' || f.rule === rule));
+  const pool = findings.filter((f) => f.tool === tool && (rule === '*' || f.rule === rule));
   if (pool.length === 0) return undefined;
-
-  if (want.preferUrl) {
-    const onUrl = pool.filter((f) => f.url === want.preferUrl);
-    if (onUrl.length > 0) pool = onUrl;
-  }
   if (want.preferBusiest) {
     return [...pool].sort((a, b) => b.instances.length - a.instances.length || b.count - a.count)[0];
   }
   return pool[0];
+}
+
+async function write(file: string, value: unknown): Promise<void> {
+  await fs.writeFile(path.join(OUT_DIR, file), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
 async function main(): Promise<void> {
@@ -149,9 +152,32 @@ async function main(): Promise<void> {
     return;
   }
 
+  await fs.rm(OUT_DIR, { recursive: true, force: true });
   await fs.mkdir(OUT_DIR, { recursive: true });
+
   const index: Array<Record<string, unknown>> = [];
   const missing: string[] = [];
+
+  // 00 is the answer: the whole headline, exactly as findings.json opens.
+  await write('00-headline.json', {
+    _note:
+      'The first thing in findings.json. Each line folds every engine that reported the ' +
+      'same defect, and `where` names the visible text so it can be found by reading the ' +
+      'page rather than by querying the DOM. Everything below it in the file is evidence.',
+    headline: report.headline,
+    headlineOmitted: report.headlineOmitted,
+  });
+  index.push({
+    file: '00-headline.json',
+    rule: '(the answer layer)',
+    severity: report.headline[0]?.severity ?? 'none',
+    occurrences: report.headline.reduce((sum, item) => sum + item.occurrences, 0),
+    why: 'What a visitor would notice, grouped by problem rather than by engine.',
+  });
+  console.log(
+    `  ${'00-headline.json'.padEnd(28)} ${String(report.headline.length).padStart(2)} line(s), ` +
+      `${report.headlineOmitted} omitted`,
+  );
 
   for (const want of WANTED) {
     const finding = pick(report.findings, want);
@@ -160,11 +186,7 @@ async function main(): Promise<void> {
       continue;
     }
     const file = `${want.file}.json`;
-    await fs.writeFile(
-      path.join(OUT_DIR, file),
-      `${JSON.stringify(forDocs(finding), null, 2)}\n`,
-      'utf8',
-    );
+    await write(file, forDocs(finding));
     index.push({
       file,
       rule: `${finding.tool}/${finding.rule}`,
@@ -176,25 +198,25 @@ async function main(): Promise<void> {
       why: want.why,
     });
     console.log(
-      `  ${file.padEnd(28)} ${`${finding.tool}/${finding.rule}`.padEnd(46)} ` +
+      `  ${file.padEnd(28)} ${`${finding.tool}/${finding.rule}`.slice(0, 44).padEnd(44)} ` +
         `${finding.severity.padEnd(8)} ${finding.audience.padEnd(14)} x${finding.count}`,
     );
   }
 
-  await fs.writeFile(
-    path.join(OUT_DIR, 'index.json'),
-    `${JSON.stringify(
-      {
-        generatedFrom: input,
-        schema: report.schema,
-        sites: [...new Set(report.findings.map((f) => f.site))].sort(),
-        examples: index,
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
+  await write('index.json', {
+    generatedFrom: input,
+    schema: report.schema,
+    generatedBy: 'npm run examples -- <findings.json>  (never edited by hand)',
+    integrity: report.integrity,
+    sites: [...new Set(report.findings.map((f) => f.site))].sort(),
+    totals: {
+      headlineLines: report.headline.length,
+      issueRows: report.issues.length,
+      findingRows: report.findings.length,
+      occurrences: report.stats.occurrencesTotal,
+    },
+    examples: index,
+  });
 
   console.log(`\n  ${index.length} example(s) written to docs/examples/`);
   if (missing.length > 0) {
